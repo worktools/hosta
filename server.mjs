@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import vm from 'node:vm';
 
 const root = resolve(process.cwd());
-const publicDir = join(root, 'public');
+const staticDir = join(root, 'dist');
 const dataFile = join(root, 'data', 'hosta.json');
 const port = Number(process.env.PORT || 4173);
 const now = () => new Date().toISOString();
@@ -101,10 +101,17 @@ function safeJson(value) { JSON.stringify(value); return value; }
 function runCommand(command, args, cwd) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let output = '';
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback(value);
+    };
     child.stdout.on('data', (chunk) => { output += chunk; }); child.stderr.on('data', (chunk) => { output += chunk; });
-    const timer = setTimeout(() => { child.kill('SIGKILL'); rejectRun(new Error(`${command} exceeded the 15 second compilation limit`)); }, 15000);
-    child.on('error', (error) => { clearTimeout(timer); rejectRun(error); });
-    child.on('close', (code) => { clearTimeout(timer); code === 0 ? resolveRun(output) : rejectRun(new Error(output.slice(-6000) || `${command} exited with ${code}`)); });
+    const timer = setTimeout(() => { child.kill('SIGKILL'); finish(rejectRun, new Error(`${command} exceeded the 15 second compilation limit`)); }, 15000);
+    child.on('error', (err) => finish(rejectRun, err));
+    child.on('close', (code) => finish(code === 0 ? resolveRun : rejectRun, code === 0 ? output : new Error(output.slice(-6000) || `${command} exited with ${code}`)));
   });
 }
 async function compileWasm(language, source) {
@@ -184,8 +191,8 @@ function armAllSchedules() { for (const schedule of store.schedules) armSchedule
 function contentType(file) { return extname(file) === '.css' ? 'text/css; charset=utf-8' : extname(file) === '.js' ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8'; }
 async function staticFile(res, pathname) {
   const requested = pathname === '/' ? 'index.html' : pathname.slice(1);
-  const file = resolve(publicDir, requested);
-  if (!file.startsWith(`${publicDir}/`) && file !== join(publicDir, 'index.html')) return false;
+  const file = resolve(staticDir, requested);
+  if (!file.startsWith(`${staticDir}/`) && file !== join(staticDir, 'index.html')) return false;
   try { const data = await readFile(file); res.writeHead(200, { 'content-type': contentType(file) }); res.end(data); return true; } catch { return false; }
 }
 const server = createServer(async (req, res) => {
@@ -221,7 +228,6 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 `);
     }
     if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { status: 'healthy', service: 'hosta', generator: process.env.DEEPSEEK_API_KEY ? 'deepseek' : 'local-demo' });
-    if (req.method === 'GET' && url.pathname === '/llms.txt') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(`# Hosta API\n\nHosta creates and hosts short JavaScript or WebAssembly functions.\n\n## Discovery\n- GET /api/apps lists applications, versions, deployments and recent runs.\n- GET /api/apps/:id retrieves an application.\n- GET /health reports service health.\n\n## Create and run\n- POST /api/apps body: {name, description, sampleInput, runtime: \"javascript\" | \"wasm\"}.\n- POST /api/apps/:id/generate creates an AI-generated version.\n- POST /api/versions/:id/run body: JSON input.\n- POST /api/versions/:id/diagnose body: JSON input.\n\n## Publish and invoke\n- POST /api/apps/:id/publish after a successful manual run.\n- POST /invoke/:appCode with Authorization: Bearer <deployment key> invokes the published version.\n- App codes are stable, URL-safe identifiers exposed as app.code.\n\n## Runtimes\n- javascript: define async function main(input, ctx).\n- wasm: submit a base64 WebAssembly module which exports main().\n`); }
     if (req.method === 'GET' && url.pathname === '/api/apps') return json(res, 200, store.apps.map(publicApp));
     if (req.method === 'POST' && url.pathname === '/api/apps') {
       const input = await body(req); if (!String(input.name || '').trim() || !String(input.description || '').trim()) return error(res, 400, 'VALIDATION_ERROR', 'Name and description are required');

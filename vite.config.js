@@ -4,5 +4,6 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   root: 'frontend',
   plugins: [react()],
-  build: { outDir: '../public', emptyOutDir: true },
+  // Keep generated browser assets out of the source tree.
+  build: { outDir: '../dist', emptyOutDir: true },
 });
