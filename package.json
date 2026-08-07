@@ -5,9 +5,20 @@
   "description": "A local AI software factory MVP",
   "type": "module",
   "scripts": {
-    "start": "node server.mjs",
-    "dev": "node --watch server.mjs",
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
     "test": "node --test test/*.test.mjs"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.5",
+    "vite": "^8.2.0"
+  }
 }

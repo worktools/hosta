@@ -4,12 +4,16 @@ Hosta 是一个本地优先的 AI 软件工厂 MVP：从自然语言需求生成
 
 ## 启动
 
-需要 Node.js 22+，不需要安装第三方 npm 依赖：
+需要 Node.js 22+：
 
 ```bash
 cp .env.example .env # 可选，填写 DeepSeek 配置
+npm ci
+npm run build
 npm start
 ```
+
+构建输出位于本地 `dist/`，由 Git 忽略；不要提交其中的文件。生产服务会从该目录提供静态页面。
 
 打开 http://127.0.0.1:4173。未配置 `DEEPSEEK_API_KEY` 时，页面会明确显示“本地演示生成器”，便于验证完整创建/运行/发布流程；配置后会调用 DeepSeek 的 Chat Completions 兼容接口。
 
