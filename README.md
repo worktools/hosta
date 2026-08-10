@@ -2,6 +2,8 @@
 
 Hosta 是一个本地优先的 AI 软件工厂 MVP：从自然语言需求生成一个 JavaScript 自动化，先试运行，再发布为可鉴权的 Webhook。
 
+界面改进和新功能开发遵循 [视觉与交互规范](VISUAL_INTERACTION_GUIDELINES.md)。
+
 ## 启动
 
 需要 Node.js 22+：
