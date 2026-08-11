@@ -38,6 +38,12 @@ const now = () => new Date().toISOString();
 const rustStarter = `#![no_std]
 #![no_main]
 
+// ── Hosta WASM JSON-Envelope Protocol ──────────────────────────────────────────
+// All host function responses use a JSON envelope:
+//   {"ok":true,"data":"..."}  — success
+//   {"ok":false,"error":{"code":"...","message":"..."}}  — failure
+// main() must also return a pointer to a JSON envelope string.
+
 #[link(wasm_import_module = "env")]
 extern "C" {
     fn fetch(url_ptr: *const u8, url_len: usize) -> *mut u8;
@@ -61,16 +67,142 @@ pub extern "C" fn alloc(size: usize) -> *mut u8 {
     }
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/// Copy bytes from src to dest (no_std, no libc)
+unsafe fn copy_bytes(dest: *mut u8, src: *const u8, len: usize) {
+    for i in 0..len {
+        unsafe { *dest.add(i) = *src.add(i); }
+    }
+}
+
+/// Length of a null-terminated string at ptr
+unsafe fn strlen(ptr: *const u8) -> usize {
+    let mut len = 0;
+    while unsafe { *ptr.add(len) } != 0 {
+        len += 1;
+    }
+    len
+}
+
+/// Write a byte slice into WASM memory, return pointer to null-terminated copy
+unsafe fn write_bytes(data: &[u8]) -> *mut u8 {
+    let ptr = alloc(data.len() + 1);
+    unsafe {
+        copy_bytes(ptr, data.as_ptr(), data.len());
+        *ptr.add(data.len()) = 0;
+    }
+    ptr
+}
+
+/// Build a JSON success envelope: {"ok":true,"data":"..."}
+fn ok(data: &str) -> *mut u8 {
+    // Manual JSON building to avoid alloc/serde in no_std
+    let prefix = b"{\\"ok\\":true,\\"data\\":\\"";
+    let suffix = b"\\"}";
+    let data_bytes = data.as_bytes();
+    let total = prefix.len() + data_bytes.len() + suffix.len();
+    let ptr = alloc(total + 1);
+    unsafe {
+        copy_bytes(ptr, prefix.as_ptr(), prefix.len());
+        copy_bytes(ptr.add(prefix.len()), data_bytes.as_ptr(), data_bytes.len());
+        copy_bytes(ptr.add(prefix.len() + data_bytes.len()), suffix.as_ptr(), suffix.len());
+        *ptr.add(total) = 0;
+    }
+    ptr
+}
+
+/// Build a JSON error envelope: {"ok":false,"error":{"code":"CODE","message":"msg"}}
+fn err(code: &str, message: &str) -> *mut u8 {
+    let parts: &[&[u8]] = &[
+        b"{\\"ok\\":false,\\"error\\":{\\"code\\":\\"",
+        code.as_bytes(),
+        b"\\",\\"message\\":\\"",
+        message.as_bytes(),
+        b"\\"}}",
+    ];
+    let mut total = 0;
+    for p in parts { total += p.len(); }
+    let ptr = alloc(total + 1);
+    let mut off = 0;
+    unsafe {
+        for p in parts {
+            copy_bytes(ptr.add(off), p.as_ptr(), p.len());
+            off += p.len();
+        }
+        *ptr.add(total) = 0;
+    }
+    ptr
+}
+
+/// Check if a JSON string starts with {"ok":true
+/// This is a fast check — no full JSON parsing needed in no_std
+unsafe fn is_ok(json_ptr: *const u8) -> bool {
+    let tag = b"{\\"ok\\":true";
+    for i in 0..tag.len() {
+        if unsafe { *json_ptr.add(i) } != tag[i] { return false; }
+    }
+    true
+}
+
+/// Extract the "data" value from a JSON success envelope.
+/// Returns a pointer to the start of the data string value within the JSON.
+/// Caller must copy the data out before the next alloc.
+unsafe fn envelope_data(json_ptr: *const u8) -> (*const u8, usize) {
+    // Look for "data":"
+    let needle = b"\\"data\\":\\"";
+    let mut i = 0;
+    loop {
+        let mut matched = true;
+        for j in 0..needle.len() {
+            if unsafe { *json_ptr.add(i + j) } != needle[j] { matched = false; break; }
+        }
+        if matched {
+            let start = i + needle.len();
+            // Find the closing quote
+            let mut end = start;
+            while unsafe { *json_ptr.add(end) } != b'"' && unsafe { *json_ptr.add(end) } != 0 {
+                end += 1;
+            }
+            return (json_ptr.add(start), end - start);
+        }
+        i += 1;
+        if unsafe { *json_ptr.add(i) } == 0 { break; }
+    }
+    // Not found — return empty
+    (json_ptr, 0)
+}
+
+// ── Example main ──────────────────────────────────────────────────────────────
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main() -> i32 {
-    // Example: fetch from an API — looks synchronous but JSPI handles async
+    // Fetch data from an API — looks synchronous but JSPI handles async
     let url = b"https://httpbin.org/json";
-    let result = unsafe { fetch(url.as_ptr(), url.len()) };
-    result as i32
+    let resp_ptr = unsafe { fetch(url.as_ptr(), url.len()) };
+
+    // Check envelope
+    if unsafe { is_ok(resp_ptr) } {
+        let (data_ptr, data_len) = unsafe { envelope_data(resp_ptr) };
+        // Return the data as the success result
+        let result = alloc(data_len + 1);
+        unsafe {
+            copy_bytes(result, data_ptr, data_len);
+            *result.add(data_len) = 0;
+        }
+        return result as i32;
+    } else {
+        // Return the error envelope as-is — host will handle it
+        return resp_ptr as i32;
+    }
 }
 
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    // Panic = unrecoverable. Write error envelope to a known location.
+    // The host captures this by checking if main() returned 0 or a valid pointer.
+    loop {}
+}
 `;
 const moonStarter = `pub fn run() -> Int {\n  42\n}\n`;
 
@@ -107,12 +239,24 @@ function buildWasmImports(logs, input, ds) {
             const parsed = new URL(url);
             if (!["http:", "https:"].includes(parsed.protocol))
               return writeStr(
-                JSON.stringify({ error: "only http/https URLs allowed" }),
+                JSON.stringify({
+                  ok: false,
+                  error: {
+                    code: "INVALID_URL",
+                    message: "only http/https URLs allowed",
+                  },
+                }),
               );
             const blocked = ["127.0.0.1", "localhost", "::1", "0.0.0.0"];
             if (blocked.includes(parsed.hostname))
               return writeStr(
-                JSON.stringify({ error: "cannot access localhost" }),
+                JSON.stringify({
+                  ok: false,
+                  error: {
+                    code: "BLOCKED_HOST",
+                    message: "cannot access localhost",
+                  },
+                }),
               );
             const resp = await fetch(url, {
               method: "GET",
@@ -122,12 +266,24 @@ function buildWasmImports(logs, input, ds) {
             const text = await resp.text();
             if (text.length > 524288)
               return writeStr(
-                JSON.stringify({ error: "response exceeds 512KB limit" }),
+                JSON.stringify({
+                  ok: false,
+                  error: {
+                    code: "RESPONSE_TOO_LARGE",
+                    message: "response exceeds 512KB limit",
+                  },
+                }),
               );
-            return writeStr(text);
+            return writeStr(JSON.stringify({ ok: true, data: text }));
           } catch (err) {
             return writeStr(
-              JSON.stringify({ error: String(err.message).slice(0, 2000) }),
+              JSON.stringify({
+                ok: false,
+                error: {
+                  code: "FETCH_ERROR",
+                  message: String(err.message).slice(0, 2000),
+                },
+              }),
             );
           }
         }),
@@ -1754,16 +1910,31 @@ async function execute(version, input, trigger, options = {}) {
           ),
         ),
       ]);
-      // Decode the returned pointer as a null-terminated string
+      // Decode the returned pointer as a null-terminated string, parse the Hosta envelope
       const resultStr = readWasmStr(mem, resultPtr);
-      let parsed;
+      let envelope;
       try {
-        parsed = JSON.parse(resultStr);
+        envelope = JSON.parse(resultStr);
       } catch {
-        parsed = resultStr;
+        run.status = "failed";
+        run.error = {
+          code: "INVALID_RESULT",
+          message: "WASM returned invalid JSON",
+        };
+        run.logs = logs;
+        return run;
       }
-      run.status = "succeeded";
-      run.result = { value: parsed, runtime: "wasm" };
+
+      if (envelope && envelope.ok === true) {
+        run.status = "succeeded";
+        run.result = { value: envelope.data, runtime: "wasm" };
+      } else {
+        run.status = "failed";
+        run.error = {
+          code: envelope?.error?.code || "WASM_ERROR",
+          message: envelope?.error?.message || "Unknown WASM error",
+        };
+      }
       run.logs = logs;
       return run;
     }
@@ -2040,7 +2211,8 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 - ctx.now() returns the current epoch millisecond timestamp.
 - ctx.call(appCode, input, options?) invokes another PUBLISHED app's current version and returns its result. Depth is capped at 3. Requires the target to be published (active deployment). Usage: const result = await ctx.call('order-summary', input);
 - ctx.fetch(url, options?) fetches data from an external HTTP/HTTPS endpoint. Only GET requests are allowed. Response size is capped at 512KB, timeout at 5s. Localhost URLs are blocked. Returns parsed JSON if content-type contains 'json', otherwise returns text. Usage: const data = await ctx.fetch('https://api.example.com/data');
-- wasm/rust: submit Rust source with #[link(wasm_import_module = "env")] extern "C" { fn fetch(...) -> *mut u8; fn log(...); fn now() -> i64; fn get_input(...) -> usize; fn get_datasource(...) -> usize; } and #[unsafe(no_mangle)] pub extern "C" fn main() -> *mut u8 (or i32). Hosta compiles with rustc --target wasm32-unknown-unknown. JSPI enables async fetch to look synchronous.
+- wasm/rust: Rust source for #![no_std] #![no_main] WASM. Exports: alloc(size) -> *mut u8, main() -> i32 (pointer to JSON envelope string). Imports via #[link(wasm_import_module = "env")]: fetch(url_ptr, url_len) -> *mut u8, log(ptr, len), now() -> i64, get_input(ptr, max_len) -> usize, get_datasource(ptr, max_len) -> usize. Hosta compiles with rustc --target wasm32-unknown-unknown. JSPI enables async fetch to look synchronous.
+- JSON envelope protocol: All host function returns & main() return use {"ok":true,"data":"..."} for success, {"ok":false,"error":{"code":"CODE","message":"..."}} for error. Use the helpers: ok(data), err(code, msg), is_ok(ptr), envelope_data(ptr).
 - wasm/moonbit: submit MoonBit source defining pub fn run() -> Int. Hosta compiles with moon build --target wasm. (JSPI async not yet supported for MoonBit)
 - The compiled WASM binary is stored server-side; agents must submit source, not base64 modules.
 `);
