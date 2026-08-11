@@ -35,8 +35,156 @@ const port = Number(process.env.PORT || 4173);
 const now = () => new Date().toISOString();
 
 // 默认代码模板
-const rustStarter = `#![no_std]\n#![no_main]\n\n#[unsafe(no_mangle)]\npub extern "C" fn main() -> i32 {\n  42\n}\n\n#[panic_handler]\nfn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n`;
+const rustStarter = `#![no_std]
+#![no_main]
+
+#[link(wasm_import_module = "env")]
+extern "C" {
+    fn fetch(url_ptr: *const u8, url_len: usize) -> *mut u8;
+    fn log(ptr: *const u8, len: usize);
+    fn now() -> i64;
+    fn get_input(ptr: *mut u8, max_len: usize) -> usize;
+    fn get_datasource(ptr: *mut u8, max_len: usize) -> usize;
+}
+
+// Simple bump allocator — host uses alloc() to write strings into WASM memory
+static mut BUMP: usize = 0;
+static mut HEAP: [u8; 65536] = [0; 65536];
+
+#[unsafe(no_mangle)]
+pub extern "C" fn alloc(size: usize) -> *mut u8 {
+    unsafe {
+        let ptr = HEAP.as_mut_ptr().add(BUMP);
+        BUMP += size;
+        if BUMP >= HEAP.len() { BUMP = 0; }
+        ptr
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main() -> i32 {
+    // Example: fetch from an API — looks synchronous but JSPI handles async
+    let url = b"https://httpbin.org/json";
+    let result = unsafe { fetch(url.as_ptr(), url.len()) };
+    result as i32
+}
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
+`;
 const moonStarter = `pub fn run() -> Int {\n  42\n}\n`;
+
+// ── WASM Memory Bridge ────────────────────────────────────────────────────────
+
+/**
+ * Build the imports object for a WASM module, with JSPI-wrapped async functions.
+ * Returns { imports, bind(memory, alloc) } — call bind() after instantiation.
+ */
+function buildWasmImports(logs, input, ds) {
+  let memory = null;
+  let alloc = null;
+
+  const readStr = (ptr, len) =>
+    new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len));
+
+  const writeStr = (str) => {
+    const encoded = new TextEncoder().encode(str + "\0");
+    const ptr = alloc(encoded.length);
+    new Uint8Array(memory.buffer).set(encoded, ptr);
+    return ptr;
+  };
+
+  return {
+    imports: {
+      env: {
+        /**
+         * Fetch a URL — JSPI suspends WASM execution until the Promise resolves.
+         * Returns a pointer to the response string in WASM memory.
+         */
+        fetch: new WebAssembly.Suspending(async (urlPtr, urlLen) => {
+          const url = readStr(urlPtr, urlLen);
+          try {
+            const parsed = new URL(url);
+            if (!["http:", "https:"].includes(parsed.protocol))
+              return writeStr(
+                JSON.stringify({ error: "only http/https URLs allowed" }),
+              );
+            const blocked = ["127.0.0.1", "localhost", "::1", "0.0.0.0"];
+            if (blocked.includes(parsed.hostname))
+              return writeStr(
+                JSON.stringify({ error: "cannot access localhost" }),
+              );
+            const resp = await fetch(url, {
+              method: "GET",
+              signal: AbortSignal.timeout(5000),
+              redirect: "follow",
+            });
+            const text = await resp.text();
+            if (text.length > 524288)
+              return writeStr(
+                JSON.stringify({ error: "response exceeds 512KB limit" }),
+              );
+            return writeStr(text);
+          } catch (err) {
+            return writeStr(
+              JSON.stringify({ error: String(err.message).slice(0, 2000) }),
+            );
+          }
+        }),
+        /** Structured log (sync, no JSPI needed) */
+        log: (ptr, len) => {
+          if (logs.length < 100) {
+            const msg = readStr(ptr, len);
+            logs.push({
+              level: "info",
+              message: msg.slice(0, 2000),
+              at: Date.now(),
+            });
+          }
+        },
+        /** Current timestamp in ms (Rust i64 → BigInt) */
+        now: () => BigInt(Date.now()),
+        /**
+         * Read the invocation input JSON.
+         * Writes the JSON string to ptr (up to maxLen bytes), returns actual length.
+         */
+        get_input: (ptr, maxLen) => {
+          const json = JSON.stringify(input ?? {});
+          const encoded = new TextEncoder().encode(json);
+          const len = Math.min(encoded.length, maxLen);
+          new Uint8Array(memory.buffer).set(encoded.subarray(0, len), ptr);
+          return len;
+        },
+        /**
+         * Read the datasource snapshot.
+         * Writes the JSON string to ptr (up to maxLen bytes), returns actual length.
+         */
+        get_datasource: (ptr, maxLen) => {
+          const json = JSON.stringify(
+            ds ? JSON.parse(JSON.stringify(ds.data)) : {},
+          );
+          const encoded = new TextEncoder().encode(json);
+          const len = Math.min(encoded.length, maxLen);
+          new Uint8Array(memory.buffer).set(encoded.subarray(0, len), ptr);
+          return len;
+        },
+      },
+    },
+    /** Bind the WASM module's memory and alloc exports after instantiation. */
+    bind(mem, al) {
+      memory = mem;
+      alloc = al;
+    },
+  };
+}
+
+/** Read a null-terminated string from WASM memory at the given pointer. */
+function readWasmStr(memory, ptr) {
+  const buf = new Uint8Array(memory.buffer, ptr);
+  let end = 0;
+  while (end < buf.length && buf[end] !== 0) end++;
+  return new TextDecoder().decode(buf.subarray(0, end));
+}
 
 // ── LLM Prompt 模板配置 ────────────────────────────────────────────────────────
 const PROMPTS = {
@@ -725,7 +873,7 @@ function diagnosticsFor(code, runtime = "javascript") {
         severity: "info",
         code: "WASM_ISOLATION",
         message:
-          "WASM 运行于无宿主 import 的最小环境；当前仅调用导出的 main 函数。",
+          "WASM 运行于 JSPI 异步环境；可调用 fetch/log/now/get_input/get_datasource 等 host 函数。",
       });
     } else {
       // JS 代码质量规则
@@ -1487,16 +1635,40 @@ async function execute(version, input, trigger, options = {}) {
 
     const logs = [];
     if (runtime === "wasm") {
-      // WASM 执行：实例化模块，调用导出的 main 函数
+      // JSPI-powered WASM execution: async host functions, WASM code looks synchronous
+      const { imports, bind } = buildWasmImports(logs, input, ds);
       const module = await WebAssembly.instantiate(
         Buffer.from(version.code, "base64"),
-        {},
+        imports,
       );
+      const mem = module.instance.exports.memory;
+      const al = module.instance.exports.alloc;
       const fn = module.instance.exports.main;
       if (typeof fn !== "function")
         throw new Error("WASM module must export a main function");
+      if (mem) bind(mem, al);
+
+      // Wrap the export so JSPI can suspend/resume across async imports
+      const wrappedFn = WebAssembly.promising(fn);
+      const resultPtr = await Promise.race([
+        wrappedFn(),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Execution exceeded 3000 ms")),
+            3000,
+          ),
+        ),
+      ]);
+      // Decode the returned pointer as a null-terminated string
+      const resultStr = readWasmStr(mem, resultPtr);
+      let parsed;
+      try {
+        parsed = JSON.parse(resultStr);
+      } catch {
+        parsed = resultStr;
+      }
       run.status = "succeeded";
-      run.result = { value: fn(), runtime: "wasm" };
+      run.result = { value: parsed, runtime: "wasm" };
       run.logs = logs;
       return run;
     }
@@ -1773,8 +1945,8 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 - ctx.now() returns the current epoch millisecond timestamp.
 - ctx.call(appCode, input, options?) invokes another PUBLISHED app's current version and returns its result. Depth is capped at 3. Requires the target to be published (active deployment). Usage: const result = await ctx.call('order-summary', input);
 - ctx.fetch(url, options?) fetches data from an external HTTP/HTTPS endpoint. Only GET requests are allowed. Response size is capped at 512KB, timeout at 5s. Localhost URLs are blocked. Returns parsed JSON if content-type contains 'json', otherwise returns text. Usage: const data = await ctx.fetch('https://api.example.com/data');
-- wasm/rust: submit Rust source defining #[unsafe(no_mangle)] pub extern "C" fn main() -> i32. Hosta compiles with rustc --target wasm32-unknown-unknown.
-- wasm/moonbit: submit MoonBit source defining pub fn run() -> Int. Hosta compiles with moon build --target wasm.
+- wasm/rust: submit Rust source with #[link(wasm_import_module = "env")] extern "C" { fn fetch(...) -> *mut u8; fn log(...); fn now() -> i64; fn get_input(...) -> usize; fn get_datasource(...) -> usize; } and #[unsafe(no_mangle)] pub extern "C" fn main() -> *mut u8 (or i32). Hosta compiles with rustc --target wasm32-unknown-unknown. JSPI enables async fetch to look synchronous.
+- wasm/moonbit: submit MoonBit source defining pub fn run() -> Int. Hosta compiles with moon build --target wasm. (JSPI async not yet supported for MoonBit)
 - The compiled WASM binary is stored server-side; agents must submit source, not base64 modules.
 `);
     }

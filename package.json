@@ -5,10 +5,10 @@
   "description": "A local AI software factory MVP",
   "type": "module",
   "scripts": {
-    "start": "node --env-file-if-exists=.env server.mjs",
+    "start": "node --experimental-wasm-jspi --env-file-if-exists=.env server.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --experimental-wasm-jspi --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=22"
