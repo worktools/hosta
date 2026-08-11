@@ -23,7 +23,7 @@ npm start
 
 ## 当前安全边界
 
-这是单用户、本地预览 MVP。它使用 Node `vm` 做最小演示执行环境，并拒绝常见宿主 API；这不是面向不可信公网代码的充分安全边界。生产化执行器应按 [RFC 0002](RFCs/0002-mvp-architecture.md) 替换为基于 Hoya 改造的 Rust Runner，并使用容器/进程级隔离、资源限制与网络策略。
+这是单用户、本地预览 MVP。JavaScript 执行使用 Node `vm.createContext` 沙箱，WASM 执行使用 Node.js 内置 `WebAssembly` API + JSPI（`--experimental-wasm-jspi`）。两者均拒绝常见宿主 API 和网络访问；这不是面向不可信公网代码的充分安全边界。生产化应考虑容器/进程级隔离、资源限制与网络策略。
 
 ## 主流程
 

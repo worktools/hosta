@@ -9,7 +9,7 @@
 | RFC                                         | 标题                           | 状态                  |
 | ------------------------------------------- | ------------------------------ | --------------------- |
 | [0001](0001-product-scope.md)               | 产品边界与 MVP                 | Accepted for planning |
-| [0002](0002-mvp-architecture.md)            | MVP 架构与技术选型             | Accepted for planning |
+| [0002](0002-mvp-architecture.md)            | MVP 架构与技术选型             | Accepted (updated)    |
 | [0003](0003-main-flow.md)                   | 生成、试运行与发布主流程       | Accepted for planning |
 | [0004](0004-delivery-plan.md)               | 交付计划与验收标准             | Accepted for planning |
 | [0005](0005-platform-vision.md)             | 平台愿景与 Vercel 式开发者体验 | Proposed              |
@@ -23,7 +23,8 @@
 Hosta 定位为**以 LLM 代码生成为核心的、面向轻量级小程序（mini-app）的研发平台**，参考 Vercel 的低门槛开发者体验。
 
 - 控制面与网页服务：Node.js 22+，单文件 HTTP server。
-- 执行面：`vm.createContext`（JavaScript）和 WebAssembly（Rust/MoonBit）。
+- 执行面：`vm.createContext`（JavaScript）和 WebAssembly 进程内执行（Rust/MoonBit，通过 JSPI 支持异步）。
+- 数据通信：WASM host 函数与 `main()` 返回值使用 JSON 信封协议（`{"ok":true,"data":"..."}` / `{"ok":false,"error":{"code":"...","message":"..."}}`）。
 - 小程序粒度：每个程序是独立的、可调用的微型服务，支持 HTTP 调用和程序间调用。
 - 数据管理：每个程序可绑定 JSON 数据源，支持版本化快照和迁移脚本。
 - 版本管理：不可变版本，草稿/发布双指针，手动切换线上版本。

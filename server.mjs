@@ -2205,6 +2205,15 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 - POST /hooks/:id with Authorization: Bearer <deployment key> invokes a deployment by id.
 - DELETE /api/apps/:id deletes an application, versions, deployments, schedules and runs.
 
+## Pages & UI (Generative UI)
+- GET /api/apps/:id/pages — list all pages for an app.
+- POST /api/apps/:id/pages — create a page. body: {name, pageConfig?, processScript?}. pageConfig is a version "1.0" PageConfig JSON (layout + regions + optional dataSources). processScript is a JavaScript function body: (input, datasource) => processedData.
+- PUT /api/apps/:id/pages/:pageId — update a page's name, pageConfig, or processScript.
+- DELETE /api/apps/:id/pages/:pageId — delete a page.
+- POST /api/apps/:id/pages/:pageId/data — execute the page's processScript. body: input JSON. Returns {data: processedResult}. Uses vm.createContext sandbox with 10s timeout.
+- GET /api/apps/code/:code/pages — public: get pages for display by app code (no auth required).
+- POST /api/ai/generate-page — AI generates a PageConfig JSON. body: {name, appName?, appDescription?, instruction?, appId?}. When appId is provided, datasource context is injected into the prompt. The LLM receives a full component catalog (24+ components with Zod-typed props) and 6 common scenario patterns (Dashboard, Data CRUD, Detail, List/Browse, Form/Wizard, Monitoring/Status). Returns {pageConfig: PageConfig}.
+
 ## Runtime contracts (JavaScript ctx object)
 - define async function main(input, ctx).
 - ctx.log(level, message, fields?) writes a structured log (level: debug|info|warn|error, capped at 100 entries).

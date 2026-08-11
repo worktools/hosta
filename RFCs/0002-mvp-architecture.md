@@ -1,62 +1,100 @@
 # RFC 0002：MVP 架构与技术选型
 
-- 状态：Accepted for planning
+- 状态：Accepted (updated 2026-08-11)
 - 日期：2026-08-04
 
 ## 1. 决策摘要
 
-Hosta 采用“Node.js 控制面 + Rust 执行面”的两进程架构，保留清晰协议边界。MVP 可由 Docker Compose 或单机进程启动，未来无需重写核心即可将执行面扩为 worker 池。
+Hosta 采用单进程 Node.js 架构，JavaScript 执行使用 `vm.createContext` 沙箱，WASM 执行使用 Node.js 内置 `WebAssembly` API + JSPI（`--experimental-wasm-jspi`）。数据采用 JSON 文件存储，无需外部数据库。
 
 | 层 | MVP 选择 | 原因 |
 | --- | --- | --- |
-| Web/API | Node.js 22+、TypeScript、Fastify | 适合产品 API、流式生成和前端协作 |
-| Web UI | React + Vite | 构建生成、试运行、日志等交互界面 |
-| 数据访问 | SQLite + Drizzle ORM | 本地启动简单，schema 可迁移到 PostgreSQL |
-| AI adapter | 自有 provider interface，DeepSeek 为默认实现 | 使用兼容 Chat Completions 的边界，便于替换和测试 |
-| 执行服务 | Rust、Axum、QuickJS | 延续 Hoya 已有技术积累，控制宿主能力 |
-| 队列 | MVP 使用数据库状态 + 进程内有界队列 | 先跑通主流程；多节点前再引入外部队列 |
-| 部署 | Docker Compose | 明确控制面与执行面的资源和网络边界 |
+| Web/API | Node.js 22+、纯 JS（无框架） | 零依赖，单文件服务器 |
+| Web UI | React + Vite（rolldown） | SPA 构建生成、试运行、日志等交互界面 |
+| 数据存储 | JSON 文件 (`data/hosta.json`) | 本地启动零配置，适合单用户 MVP |
+| AI adapter | DeepSeek Chat Completions API | 兼容 OpenAI 协议的边界，便于替换 |
+| JS 执行 | Node.js `vm.createContext` | 轻量沙箱，拒绝宿主 API |
+| WASM 执行 | Node.js `WebAssembly` + JSPI | 进程内执行，`WebAssembly.Suspending` 包装异步 host 函数 |
+| 编译 | `rustc --target wasm32-unknown-unknown` | 系统自带，无需额外工具链 |
+| 部署 | 单进程 `node server.mjs` | 极简部署 |
 
-## 2. 逻辑架构
+## 2. 实际架构
 
 ```text
 Browser
-  │ HTTP/SSE
+  │ HTTP
   ▼
-Hosta Web/API (Node.js)
-  ├── App / Version / Deployment / Run API
-  ├── Generation orchestrator ──► DeepSeek adapter
+Hosta Node.js Server (server.mjs)
+  ├── App / Version / Deployment / Run / Page API
+  ├── Generation orchestrator ──► DeepSeek API
   ├── Policy and validation
-  └── SQLite
-          │ private HTTP, signed request
-          ▼
-Hosta Runner (Rust, derived from Hoya)
-  ├── QuickJS runtime
-  ├── resource limits
-  ├── capability-filtered host APIs
-  └── stdout/stderr/result capture
+  ├── JS execution: vm.createContext sandbox
+  ├── WASM execution: WebAssembly.instantiate + JSPI
+  ├── JSON envelope protocol: {ok:true,data:"..."} / {ok:false,error:{code,message}}
+  └── data/hosta.json (file-based store)
 ```
 
-控制面是唯一公开入口。Runner 不暴露公网端口、不读取数据库、不持有 DeepSeek key，只接收一次执行所需的代码、输入、限制和能力清单。
+单进程架构，无外部 Runner。JS 在 `vm.createContext` 沙箱中执行，WASM 通过 `WebAssembly.instantiate` 进程内执行，JSPI 让 async host 函数对 WASM 代码呈现为同步调用。
 
-## 3. 为什么改造 Hoya，而不是直接复用
+## 3. WASM 执行与 JSPI 架构
 
-Hoya 已提供 Axum、QuickJS/Wasmtime、stdout/stderr 捕获和简单页面，适合作为执行原型。但 Hosta 需要调整边界：
+### 3.1 JSPI（JavaScript Promise Integration）
 
-- 删除“根据任意远程 URL 下载并执行”的默认路径，避免 SSRF 和代码来源漂移；
-- 执行请求直接携带由控制面按 hash 固化的代码；
-- 加入 wall-clock、CPU/指令、内存、栈、日志和响应大小限制；
-- 每次运行创建干净上下文，禁止访问宿主文件、进程环境和系统命令；
-- `fetch` 默认关闭，开启时执行 DNS/IP、协议、端口、重定向和响应大小策略；
-- 将当前内存 AppStorage 和 Hoya 页面移出 Runner；
-- 返回稳定的结构化执行协议和错误码；
-- Wasmtime 保留为后续能力，不进入 MVP 主流程。
+Node.js v24.6.0+ 需要 `--experimental-wasm-jspi` 标志。核心机制：
 
-QuickJS 本身不是完整的安全边界。MVP 的 Runner 还应运行在非 root 容器中，使用只读文件系统、无宿主挂载、受限网络和容器级 CPU/内存限制。面向公网或多租户前，应评估每次执行使用隔离子进程、microVM 或专用沙箱。
+- **Host → WASM**：`new WebAssembly.Suspending(asyncFn)` 包装异步 host 函数，对 WASM 代码呈现为同步函数
+- **WASM → Host**：`WebAssembly.promising(wasmFn)` 包装 WASM 导出函数，对 JS 呈现为返回 Promise 的函数
+
+### 3.2 Memory Bridge
+
+`buildWasmImports()` 构建 WASM 导入对象，提供内存读写桥：
+
+- `readStr(ptr, len)` — 从 WASM 内存读取字符串
+- `writeStr(str)` — 将字符串写入 WASM 内存（通过 `alloc()` 分配）
+- `bind(memory, alloc)` — 绑定 WASM 模块的 memory 和 alloc 导出
+
+### 3.3 Rust 编译
+
+```bash
+rustc +stable --target wasm32-unknown-unknown -O --crate-type cdylib \
+  -C link-arg=-zstack-size=65536 -o main.wasm main.rs
+```
+
+- `#![no_std]` + `#![no_main]` — 无标准库，极简 WASM
+- Bump allocator：64KB 静态堆，`alloc(size)` 返回指针
+- `#[link(wasm_import_module = "env")]` — 声明 host 导入
+- `#[unsafe(no_mangle)] pub extern "C" fn main() -> i32` — 入口，返回 JSON 信封指针
+
+### 3.4 JSON 信封协议
+
+所有 host 函数返回值和 `main()` 返回值均使用统一 JSON 信封：
+
+```
+成功: {"ok":true,"data":"..."}
+失败: {"ok":false,"error":{"code":"CODE","message":"..."}}
+```
+
+Rust 侧提供 no_std 辅助函数：
+- `ok(data: &str)` — 手动构建成功信封
+- `err(code: &str, message: &str)` — 手动构建失败信封
+- `is_ok(ptr)` — 快速检查 `{"ok":true` 前缀
+- `envelope_data(ptr)` — 提取 `"data"` 字段
+
+错误码：`INVALID_URL`, `BLOCKED_HOST`, `RESPONSE_TOO_LARGE`, `FETCH_ERROR`
+
+### 3.5 导入函数
+
+| 函数 | 签名 | 说明 |
+| --- | --- | --- |
+| `fetch` | `(url_ptr, url_len) -> *mut u8` | JSPI 包装的 HTTP GET，返回 JSON 信封 |
+| `log` | `(ptr, len)` | 结构化日志 |
+| `now` | `() -> i64` | 当前毫秒时间戳 |
+| `get_input` | `(ptr, max_len) -> usize` | 读取调用输入 JSON |
+| `get_datasource` | `(ptr, max_len) -> usize` | 读取数据源快照 |
 
 ## 4. 代码契约
 
-生成脚本只允许一个入口：
+### 4.1 JavaScript
 
 ```js
 export async function main(input, ctx) {
@@ -65,96 +103,152 @@ export async function main(input, ctx) {
 }
 ```
 
-`input` 必须为 JSON。`ctx` 只暴露版本化能力：
+`input` 必须为 JSON。`ctx` 暴露：
+- `ctx.log(level, message, fields?)` — 结构化日志
+- `ctx.now()` — 当前时间戳
+- `ctx.call(appCode, input, options?)` — 调用其他已发布应用
+- `ctx.fetch(url, options?)` — 受限 HTTP GET（仅 https/http，禁止 localhost，512KB 上限，5s 超时）
+- `ctx.datasource` — 数据源只读快照
 
-- `ctx.log(level, message, fields?)`
-- `ctx.now()`
-- `ctx.fetch(request)`：仅在应用获授网络能力时存在
-- `ctx.secrets.get(name)`：Phase 2 才实现；MVP 不向脚本提供 secrets
+禁止：`import`、`require`、`eval`、`Function`、Node.js builtin、npm 包、全局状态。
 
-禁止动态 import、`eval` 的额外代码来源、Node.js builtin、npm 包和持久化全局状态。生成提示词和静态校验器必须共同维护这个契约。
+### 4.2 Rust/WASM
 
-## 5. Runner 协议（内部）
+```rust
+#![no_std]
+#![no_main]
 
-`POST /v1/executions`
+#[link(wasm_import_module = "env")]
+extern "C" {
+    fn fetch(url_ptr: *const u8, url_len: usize) -> *mut u8;
+    fn log(ptr: *const u8, len: usize);
+    fn now() -> i64;
+    fn get_input(ptr: *mut u8, max_len: usize) -> usize;
+    fn get_datasource(ptr: *mut u8, max_len: usize) -> usize;
+}
 
-请求：
+#[unsafe(no_mangle)]
+pub extern "C" fn alloc(size: usize) -> *mut u8 { /* bump allocator */ }
 
-```json
-{
-  "runId": "run_...",
-  "code": "export async function main(input, ctx) { ... }",
-  "codeSha256": "...",
-  "input": { "value": 1 },
-  "limits": {
-    "timeoutMs": 3000,
-    "memoryMb": 64,
-    "maxLogBytes": 65536,
-    "maxResultBytes": 1048576
-  },
-  "capabilities": { "network": [] }
+#[unsafe(no_mangle)]
+pub extern "C" fn main() -> i32 {
+    // 返回 JSON 信封指针
+    ok("hello")
 }
 ```
 
-响应：
+## 5. 执行流程
+
+```
+POST /api/versions/:id/run { input }
+  ├── 策略检查（validateCode）
+  ├── Input schema 校验（validateJsonSchema）
+  ├── [JS] vm.createContext → vm.runInContext → main(input, ctx)
+  ├── [WASM] WebAssembly.instantiate → WebAssembly.promising(main) → resultPtr
+  │         └── 解析 JSON 信封 → ok:true → succeeded / ok:false → failed
+  └── 返回 { status, result, logs, error, durationMs }
+```
+
+## 6. Generative UI 页面生成
+
+### 6.1 PageConfig 格式
 
 ```json
 {
-  "status": "succeeded",
-  "result": { "ok": true, "value": 1 },
-  "logs": [],
-  "metrics": { "durationMs": 12 },
-  "error": null
+  "version": "1.0",
+  "layout": { "type": "grid", "config": {} },
+  "regions": [
+    {
+      "id": "region_xxx",
+      "position": { "row": 0, "col": 0, "rowSpan": 1, "colSpan": 12 },
+      "component": {
+        "type": "statistic",
+        "props": { "title": "总订单", "value": 1234 }
+      }
+    }
+  ],
+  "dataSources": [
+    { "id": "ds_1", "binding": [{ "regionId": "region_xxx", "field": "orders" }] }
+  ]
 }
 ```
 
-状态限定为 `succeeded | failed | timed_out | rejected | internal_error`。控制面必须验证返回的 `runId` 与代码 hash。
+### 6.2 AI 页面生成
 
-## 6. AI provider 边界
+`POST /api/ai/generate-page` 使用 LLM 生成 PageConfig。提示词包含：
+- 24+ 组件的完整 Zod Schema（类型、props、可选值）
+- 6 种常见场景模式：Dashboard/Analytics、Data CRUD、Detail Page、List/Browse、Form/Wizard、Monitoring/Status
+- 数据源绑定指南（`dataSources` 字段）
+- 12 列网格布局指南
 
-控制面定义 `ModelProvider.generate(request)`，配置项至少包括：
+当提供 `appId` 时，数据源 schema 和数据字段会被注入到提示词中。
 
-- `AI_PROVIDER=deepseek`
-- `DEEPSEEK_API_KEY`
-- `DEEPSEEK_BASE_URL`
-- `DEEPSEEK_MODEL`（不在源码中硬编码具体型号）
-- timeout、最大重试次数和 token 上限
+### 6.3 processScript
 
-模型输出必须符合 JSON schema，字段包含 `summary`、`assumptions`、`inputSchema`、`code` 和 `testCases`。解析或 schema 校验失败时最多进行一次“修复格式”调用；仍失败则结束生成，不执行猜测性代码。
+每个页面可附带一个 `processScript`（JavaScript 函数体），用于在渲染前处理数据：
 
-日志只记录 provider、模型配置名、延迟、token 使用和请求关联 ID；不得记录 API key。用户输入进入模型前也不得混入 Hosta 服务端环境变量。
+```js
+(input, datasource) => {
+  return {
+    stats: datasource.orders.reduce((acc, o) => acc + o.amount, 0),
+    items: datasource.orders.slice(0, 20)
+  };
+}
+```
 
-## 7. 最小数据模型
+通过 `POST /api/apps/:id/pages/:pageId/data` 在 vm 沙箱中执行。
 
-- `apps`：`id`, `name`, `description`, `draft_version_id`, `published_version_id`, timestamps
-- `versions`：`id`, `app_id`, `number`, `prompt`, `spec_json`, `code`, `code_sha256`, `status`, timestamps
-- `deployments`：`id`, `app_id`, `version_id`, `status`, `webhook_key_hash`, timestamps
-- `runs`：`id`, `app_id`, `version_id`, `deployment_id?`, `trigger`, `status`, `input_json`, `result_json?`, `error_json?`, metrics, timestamps
-- `run_logs`：`id`, `run_id`, `sequence`, `level`, `message`, `fields_json?`, timestamp
-- `model_calls`：`id`, `version_id`, provider, model, token counts, latency, estimated cost, status
+## 7. 数据模型
 
-代码和 prompt 在单机 MVP 中存入数据库；对输入、结果和日志设置保留期与大小上限。Webhook key 只存 hash，明文仅在创建或轮换时显示一次。
+当前使用 JSON 文件存储（`data/hosta.json`），结构：
 
-## 8. 公开 API 草案
+- `apps`：`id`, `name`, `description`, `code`, `runtime`, `language`, `requirements`, `publishedVersionId`, timestamps
+- `versions`：`id`, `appId`, `code`, `sourceCode`, `wasmSize`, `inputSchema`, `outputSchema`, `tests`, `status`, timestamps
+- `deployments`：`id`, `appId`, `versionId`, `status`, `keyHash`, `apiKey`, timestamps
+- `runs`：`id`, `appId`, `versionId`, `deploymentId`, `trigger`, `status`, `input`, `result`, `error`, `logs`, `durationMs`, timestamps
+- `pages`：`id`, `appId`, `name`, `pageConfig`, `processScript`, timestamps
+- `datasources`：`id`, `appId`, `schema`, `data`, timestamps
+- `schedules`：`id`, `appId`, `deploymentId`, `cron`, `input`, timestamps
 
-- `POST /api/apps`
-- `GET /api/apps/:appId`
-- `POST /api/apps/:appId/generations`
-- `GET /api/generations/:id/events`（SSE）
-- `POST /api/versions/:versionId/runs`
-- `POST /api/apps/:appId/publish`
-- `POST /hooks/:deploymentId`（Bearer key）
-- `GET /api/apps/:appId/runs`
-- `GET /api/runs/:runId`
-- `POST /api/apps/:appId/disable`
+## 8. 公开 API
 
-所有写操作接收 idempotency key。Webhook 必须限流，错误响应不得泄漏源码、堆栈或内部地址。
+### 应用与版本
+- `POST /api/apps` — 创建应用
+- `GET /api/apps` — 列出应用
+- `GET /api/apps/:id` — 获取应用
+- `PATCH /api/apps/:id` — 更新应用
+- `DELETE /api/apps/:id` — 删除应用
+- `POST /api/apps/:id/generate` — LLM 生成版本
+- `POST /api/versions/:id/run` — 执行版本
+- `POST /api/versions/:id/diagnose` — 诊断执行
+- `POST /api/versions/:id/revise` — LLM 修复版本
+- `POST /api/versions/:id/tests` — 添加测试用例
+- `POST /api/versions/:id/tests/run-all` — 运行全部测试
+
+### 发布与调用
+- `POST /api/apps/:id/publish` — 发布应用
+- `GET|POST /invoke/:appCode` — 调用已发布应用
+- `POST /hooks/:id` — 通过 deployment ID 调用
+
+### Generative UI 页面
+- `GET /api/apps/:id/pages` — 列出页面
+- `POST /api/apps/:id/pages` — 创建页面
+- `PUT /api/apps/:id/pages/:pageId` — 更新页面
+- `DELETE /api/apps/:id/pages/:pageId` — 删除页面
+- `POST /api/apps/:id/pages/:pageId/data` — 执行 processScript 获取页面数据
+- `GET /api/apps/code/:code/pages` — 公开获取页面
+- `POST /api/ai/generate-page` — AI 生成 PageConfig
+
+### 其他
+- `GET /health` — 健康检查
+- `GET /llms.txt` — LLM 可读的 API 文档
+- `POST /api/format` — 代码格式化
+- `POST /api/sample-input` — 生成示例输入
 
 ## 9. 关键风险
 
-- 沙箱逃逸：通过分层隔离、最小 host API、依赖锁定、模糊测试和安全评审降低风险。
-- 生成代码不可靠：结构化输出、静态规则、自动测试、显式发布和版本回滚。
-- Prompt injection：外部数据不进入系统提示词；模型无部署权限；工具/能力由服务端政策决定。
-- 成本失控：单次 token 上限、超时、有限重试、用户/应用配额和用量可见性。
-- 单机队列丢失：启动时扫描非终态记录并标记失败或重试；进入多节点阶段前替换为持久队列。
-
+- 沙箱逃逸：`vm.createContext` 和 WASM 均非完整安全边界，需后续加固
+- 生成代码不可靠：结构化输出、静态规则、自动测试、显式发布和版本回滚
+- Prompt injection：外部数据不进入系统提示词；模型无部署权限
+- 成本失控：单次 token 上限、超时、有限重试
+- JSON 文件存储：单用户场景足够，多用户需迁移到数据库
