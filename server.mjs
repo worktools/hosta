@@ -93,6 +93,42 @@ ${instruction}
 
 Return JSON: {"summary": "what was changed", "code": "async function main(input, ctx) { ... }", "tests": [{"name": "...", "input": {...}, "expectedOutput": {...}}]}`,
 
+  /** 需求文档生成/优化 prompt — 兼容空文档 */
+  refineRequirements: ({
+    requirements,
+    instruction,
+    appName,
+    appDescription,
+  }) =>
+    requirements.trim()
+      ? `You are refining a requirements document for a lightweight mini-app. The document is in Markdown. Edit it according to the user's instruction, preserving the overall structure. Return JSON only.
+
+## App Name
+${appName}
+
+## App Description
+${appDescription || "N/A"}
+
+## Current Requirements Document
+${requirements}
+
+## User Instruction
+${instruction}
+
+Return JSON only: {"summary": "brief description of what was changed in Chinese", "refined": "the full refined requirements document in Markdown"}`
+      : `You are writing a requirements document for a lightweight mini-app from scratch. The document should be in Markdown (Chinese or English), structured and actionable for a developer or LLM to implement. Include: functional description, input/output format, edge cases, external dependencies, and examples.
+
+## App Name
+${appName}
+
+## App Description
+${appDescription || "N/A"}
+
+## User Instruction (what the app should do)
+${instruction}
+
+Return JSON only: {"summary": "brief description of what was generated in Chinese", "refined": "the full requirements document in Markdown"}`,
+
   /** 示例输入生成 prompt */
   sampleInput: ({ description, runtime }) =>
     `You generate a realistic JSON sample input for a small automation program. Return JSON only with the key "input", whose value is the sample object the program would receive at runtime. Program description: ${description}\nRuntime: ${runtime}\nReturn only: {"input": { ... }}`,
@@ -110,9 +146,59 @@ Existing tests: ${JSON.stringify(existingTests, null, 2)}
 
 Return JSON only in this format: {"tests": [{"name": "...", "input": {...}, "expectedOutput": {...}}]}`,
 
+  /** Schema 生成 prompt */
+  generateSchema: ({
+    appName,
+    appDescription,
+    requirements,
+    code,
+    tests,
+    existingSchemas,
+    target,
+    instruction,
+  }) =>
+    `You are a data architect for a lightweight mini-app platform. Generate a JSON Schema for the ${target === "input" ? "INPUT" : "OUTPUT"} of a Hosta mini-app.
+
+## App Name
+${appName}
+
+## App Description
+${appDescription || "N/A"}
+
+## Requirements Document
+${requirements || "N/A"}
+
+## Current Code
+${code || "No code yet"}
+
+## Test Cases
+${JSON.stringify(tests || [], null, 2)}
+
+${existingSchemas?.inputSchema ? `## Current Input Schema\n${JSON.stringify(existingSchemas.inputSchema)}` : "## Current Input Schema\nNone yet"}
+${existingSchemas?.outputSchema ? `## Current Output Schema\n${JSON.stringify(existingSchemas.outputSchema)}` : "## Current Output Schema\nNone yet"}
+
+## User Instruction
+${instruction || `Generate a comprehensive JSON Schema for the ${target === "input" ? "input parameters" : "expected output"} of this app.`}
+
+## Requirements
+- Generate a JSON Schema (draft-04 compatible) for the **${target === "input" ? "INPUT" : "OUTPUT"}** only.
+- Include type, properties, required, and descriptions for each field.
+- Use "type": "object" at the root.
+- Infer field types from the code signature and test cases.
+- Mark fields that are always present in tests as required.
+- Use Chinese descriptions for fields when the app is in Chinese context.
+- Be precise about number vs integer vs string types.
+
+Return JSON only: {"schema": { ... }}`,
+
   /** LLM 自动修订 prompt */
-  revise: ({ version, errorSummary }) =>
+  revise: ({ version, errorSummary, hint }) =>
     `You are fixing a Hosta JavaScript function that failed tests. Fix the code while keeping the same async function main(input, ctx) signature. No imports, require, process, eval, Function, network, or markdown. Return JSON only with keys: summary, code, tests.
+${
+  hint
+    ? `\n## Correction Hint from User\n${hint}\nPay extra attention to the area described in this hint.`
+    : ""
+}
 
 Current code:
 ${version.code}
@@ -271,10 +357,30 @@ function invokeDocsFor(app, deployment, origin) {
   const full = `${origin}${path}`;
   const inputJson = JSON.stringify(sample);
   const browser = `${full}?key=<YOUR_KEY>&input=${encodeURIComponent(inputJson)}`;
+  const publishedVersion = deployment
+    ? versionById(deployment.versionId)
+    : null;
+  const pinnedPath = publishedVersion
+    ? `/invoke-version/${app.code}/${publishedVersion.number}`
+    : null;
+  const pinnedFull = pinnedPath ? `${origin}${pinnedPath}` : null;
   return {
     appCode: app.code,
     published: Boolean(deployment),
-    endpoint: { path, methods: ["GET", "POST"] },
+    publishedVersion: publishedVersion
+      ? { number: publishedVersion.number, id: publishedVersion.id }
+      : null,
+    endpoint: {
+      path,
+      methods: ["GET", "POST"],
+      versionPinned: pinnedPath
+        ? {
+            path: pinnedPath,
+            description:
+              "钉选版本调用。始终使用此特定版本，不受后续发布影响。适合需要稳定 API 的业务集成。",
+          }
+        : null,
+    },
     auth: deployment
       ? "GET 通过 ?key= 或 ?api_key= 传入；POST 通过 Authorization: Bearer <key> 请求头。密钥仅展示一次，请妥善保存。"
       : "该应用尚未发布。请先在页面试运行成功并发布，才能获得调用密钥。",
@@ -284,12 +390,16 @@ function invokeDocsFor(app, deployment, origin) {
             description:
               "浏览器地址栏或任意 HTTP 客户端直接调用。使用 ?input= 传 JSON，或用扁平键值对（如 ?a=1&b=hello）。",
             url: browser,
+            pinnedUrl: pinnedFull
+              ? `${pinnedFull}?key=<YOUR_KEY>&input=${encodeURIComponent(inputJson)}`
+              : null,
           }
         : null,
       post: deployment
         ? {
             description: "POST 请求，Body 为应用示例输入 JSON。",
             url: full,
+            pinnedUrl: pinnedFull || null,
             headers: [
               "Authorization: Bearer <YOUR_KEY>",
               "Content-Type: application/json",
@@ -302,6 +412,9 @@ function invokeDocsFor(app, deployment, origin) {
       ? {
           browser,
           curl: `curl -X POST "${full}" -H "Authorization: Bearer <YOUR_KEY>" -H "Content-Type: application/json" -d '${inputJson}'`,
+          pinnedCurl: pinnedFull
+            ? `curl -X POST "${pinnedFull}" -H "Authorization: Bearer <YOUR_KEY>" -H "Content-Type: application/json" -d '${inputJson}'`
+            : null,
         }
       : null,
     sampleInput: sample,
@@ -1026,6 +1139,60 @@ async function deepSeekRefine({
     model,
   };
 }
+async function deepSeekRefineRequirements({
+  requirements,
+  instruction,
+  appName,
+  appDescription,
+}) {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) throw new Error("DEEPSEEK_API_KEY not configured");
+  const base = (
+    process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
+  ).replace(/\/$/, "");
+  const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+  const prompt = PROMPTS.refineRequirements({
+    requirements,
+    instruction,
+    appName,
+    appDescription,
+  });
+  const response = await fetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.7,
+      max_tokens: 4000,
+      messages: [{ role: "user", content: prompt }],
+    }),
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!response.ok)
+    throw new Error(`DeepSeek returned HTTP ${response.status}`);
+  const payload = await response.json();
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) throw new Error("DeepSeek returned no content");
+  const cleaned = content.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+  const generated = JSON.parse(cleaned);
+  if (
+    typeof generated.summary !== "string" ||
+    typeof generated.refined !== "string"
+  )
+    throw new Error(
+      "DeepSeek response does not match the requirements refinement schema",
+    );
+  return {
+    source: "deepseek",
+    summary: generated.summary,
+    refined: generated.refined,
+    usage: payload.usage ?? null,
+    model,
+  };
+}
 async function deepSeekGeneratePage({ name, appName, appDescription }) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not configured");
@@ -1106,13 +1273,66 @@ async function deepSeekGenerateTests({ app, version }) {
 }
 
 /**
+ * LLM 生成 Schema：根据需求文档、代码、测试用例生成 input/output JSON Schema
+ */
+async function deepSeekGenerateSchema({ app, version, target, instruction }) {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) throw new Error("DEEPSEEK_API_KEY not configured");
+  const base = (
+    process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
+  ).replace(/\/$/, "");
+  const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+  const prompt = PROMPTS.generateSchema({
+    appName: app.name,
+    appDescription: app.description,
+    requirements: app.requirements,
+    code: version.code,
+    tests: (version.tests || []).map((t) => ({
+      name: t.name,
+      input: t.input,
+      expectedOutput: t.expectedOutput,
+    })),
+    existingSchemas: {
+      inputSchema: version.inputSchema,
+      outputSchema: version.outputSchema,
+    },
+    target,
+    instruction,
+  });
+  const response = await fetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.3,
+      max_tokens: 2000,
+      messages: [{ role: "user", content: prompt }],
+    }),
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!response.ok)
+    throw new Error(`DeepSeek returned HTTP ${response.status}`);
+  const payload = await response.json();
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) throw new Error("DeepSeek returned no content");
+  const cleaned = content.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+  const generated = JSON.parse(cleaned);
+  if (!generated.schema || typeof generated.schema !== "object")
+    throw new Error("DeepSeek response missing schema");
+  return { schema: generated.schema };
+}
+
+/**
  * LLM 自动修订：将错误信息反馈给 DeepSeek，生成修订版本
  * @param {object} app - 应用对象
  * @param {object} version - 当前版本（含 code, tests, runtime 等）
  * @param {object} prevResult - 上一次运行的结果（含 testResults, runErrors 等）
  * @returns {Promise<object>} { code, summary, tests }
  */
-async function deepSeekRevise({ app, version, prevResult }) {
+async function deepSeekRevise({ app, version, prevResult, hint }) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not configured");
   const base = (
@@ -1129,7 +1349,7 @@ async function deepSeekRevise({ app, version, prevResult }) {
     )
     .join("\n");
 
-  const prompt = PROMPTS.revise({ version, errorSummary });
+  const prompt = PROMPTS.revise({ version, errorSummary, hint });
 
   const response = await fetch(`${base}/chat/completions`, {
     method: "POST",
@@ -1903,6 +2123,41 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
         );
       }
     }
+    const refineReqMatch = url.pathname.match(
+      /^\/api\/apps\/([^/]+)\/refine-requirements$/,
+    );
+    if (req.method === "POST" && refineReqMatch) {
+      const app = appById(refineReqMatch[1]);
+      if (!app) return error(res, 404, "NOT_FOUND", "App not found");
+      const payload = await body(req);
+      const instruction = String(payload.instruction || "").trim();
+      if (!instruction)
+        return error(
+          res,
+          400,
+          "VALIDATION_ERROR",
+          "refine instruction is required",
+        );
+      try {
+        const result = await deepSeekRefineRequirements({
+          requirements: app.requirements || "",
+          instruction,
+          appName: app.name,
+          appDescription: app.description || "",
+        });
+        return json(res, 200, {
+          summary: result.summary,
+          refined: result.refined,
+        });
+      } catch (e) {
+        return error(
+          res,
+          502,
+          "MODEL_ERROR",
+          `Requirements refinement failed: ${e.message}`,
+        );
+      }
+    }
     const testsMatch = url.pathname.match(/^\/api\/versions\/([^\/]+)\/tests$/);
     if (req.method === "GET" && testsMatch) {
       const version = versionById(testsMatch[1]);
@@ -2056,6 +2311,35 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
       await save();
       return json(res, 200, { deleted: idx });
     }
+    // Schema 生成
+    const schemaGenerateMatch = url.pathname.match(
+      /^\/api\/versions\/([^\/]+)\/schema\/generate$/,
+    );
+    if (req.method === "POST" && schemaGenerateMatch) {
+      const version = versionById(schemaGenerateMatch[1]);
+      if (!version) return error(res, 404, "NOT_FOUND", "Version not found");
+      const app = appById(version.appId);
+      if (!app) return error(res, 404, "NOT_FOUND", "App not found");
+      const payload = await body(req);
+      const target = payload.target === "output" ? "output" : "input";
+      const instruction = String(payload.instruction || "").trim();
+      try {
+        const { schema } = await deepSeekGenerateSchema({
+          app,
+          version,
+          target,
+          instruction,
+        });
+        return json(res, 200, { schema, target });
+      } catch (e) {
+        return error(
+          res,
+          502,
+          "MODEL_ERROR",
+          `Schema generation failed: ${e.message}`,
+        );
+      }
+    }
     // 输入 schema 更新
     const schemaMatch = url.pathname.match(
       /^\/api\/versions\/([^\/]+)\/schema$/,
@@ -2099,6 +2383,8 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
       const version = versionById(reviseMatch[1]);
       if (!version) return error(res, 404, "NOT_FOUND", "Version not found");
       const app = appById(version.appId);
+      const payload = await body(req);
+      const hint = String(payload.hint || "").trim();
       // 收集上次运行的失败信息
       const testResults = [];
       const tests = version.tests || [];
@@ -2123,6 +2409,7 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
           app,
           version,
           prevResult: { testResults },
+          hint,
         });
         const compiled = {
           binary: revised.code,
@@ -2392,6 +2679,63 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
       const version = versionById(deployment.versionId);
       return json(res, 200, await execute(version, await body(req), "webhook"));
     }
+    // ── 版本钉选调用：/invoke-version/:appCode/:version ──
+    const invokePinnedMatch = url.pathname.match(
+      /^\/invoke-version\/([a-z0-9-]+)\/(\d+)$/,
+    );
+    if (invokePinnedMatch && (req.method === "GET" || req.method === "POST")) {
+      const app = appByCode(invokePinnedMatch[1]);
+      const versionNumber = parseInt(invokePinnedMatch[2], 10);
+      if (!app) return error(res, 404, "NOT_FOUND", "Application not found");
+      const deployment = store.deployments.find(
+        (item) => item.appId === app.id && item.status === "active",
+      );
+      if (!deployment)
+        return error(
+          res,
+          404,
+          "NOT_FOUND",
+          "No active deployment for this application",
+        );
+      const version = store.versions.find(
+        (v) => v.appId === app.id && v.number === versionNumber,
+      );
+      if (!version)
+        return error(
+          res,
+          404,
+          "NOT_FOUND",
+          `Version v${versionNumber} not found`,
+        );
+      if (version.status !== "ready")
+        return error(
+          res,
+          400,
+          "VERSION_NOT_READY",
+          `Version v${versionNumber} is not ready (status: ${version.status})`,
+        );
+      const token =
+        req.method === "GET"
+          ? String(
+              url.searchParams.get("key") ||
+                url.searchParams.get("api_key") ||
+                "",
+            )
+          : String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      if (!token || sha(token) !== deployment.keyHash)
+        return error(
+          res,
+          401,
+          "UNAUTHORIZED",
+          "A valid Bearer key is required",
+        );
+      return json(
+        res,
+        200,
+        await execute(version, await inputFromRequest(req), "invoke-pinned"),
+      );
+    }
+    // ── 浮动版本调用：/invoke/:appCode（始终调用最新发布版本）──
     const invokeMatch = url.pathname.match(/^\/invoke\/([a-z0-9-]+)$/);
     if (invokeMatch && (req.method === "GET" || req.method === "POST")) {
       const app = appByCode(invokeMatch[1]);

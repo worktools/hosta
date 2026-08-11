@@ -152,6 +152,149 @@ function ToastContainer({ toasts, dismiss }) {
   );
 }
 
+// ── AI Drawer — unified AI editing interaction ─────────────────────────────────
+/**
+ * Props:
+ *   open          — boolean
+ *   onClose       — () => void
+ *   title         — drawer header text
+ *   goal          — description of what AI will do
+ *   context       — React node shown as read-only context
+ *   placeholder   — instruction input placeholder
+ *   onGenerate    — async (instruction: string) => { summary: string, result: any }
+ *   onApply       — (instruction: string, result: any) => void (called after user confirms)
+ *   applyLabel    — label for apply button (default "✓ 应用")
+ */
+function AIDrawer({
+  open,
+  onClose,
+  title,
+  goal,
+  context,
+  placeholder = "告诉 AI 重点关注什么…",
+  onGenerate,
+  onApply,
+  applyLabel = "✓ 应用",
+}) {
+  const [instruction, setInstruction] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [summary, setSummary] = useState("");
+  const [result, setResult] = useState(null);
+
+  // reset on open
+  useEffect(() => {
+    if (open) {
+      setInstruction("");
+      setGenerating(false);
+      setSummary("");
+      setResult(null);
+    }
+  }, [open]);
+
+  const generate = async () => {
+    if (!instruction.trim() || !onGenerate) return;
+    setGenerating(true);
+    setSummary("");
+    setResult(null);
+    try {
+      const { summary: s, result: r } = await onGenerate(instruction.trim());
+      setSummary(s);
+      setResult(r);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const apply = () => {
+    if (onApply) onApply(instruction.trim(), result);
+    onClose();
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="ai-drawer-overlay" onClick={onClose}>
+      <div className="ai-drawer" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="ai-drawer__header">
+          <h3>AI 编辑：{title}</h3>
+          <button className="close-btn" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="ai-drawer__body">
+          {/* Goal */}
+          <div className="ai-drawer__section">
+            <span className="ai-drawer__section-label">目标</span>
+            <span className="ai-drawer__goal">{goal}</span>
+          </div>
+
+          {/* Context */}
+          {context && (
+            <div className="ai-drawer__section">
+              <span className="ai-drawer__section-label">上下文</span>
+              <pre className="ai-drawer__context">{context}</pre>
+            </div>
+          )}
+
+          {/* Instruction + Generate */}
+          <div className="ai-drawer__section">
+            <span className="ai-drawer__section-label">你的批注</span>
+            <div className="ai-drawer__instruction-row">
+              <input
+                className="ai-drawer__instruction"
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                placeholder={placeholder}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !generating) generate();
+                }}
+                autoFocus
+              />
+              <button
+                className="primary"
+                onClick={generate}
+                disabled={generating || !instruction.trim()}
+              >
+                {generating ? "生成中…" : "✨ 生成"}
+              </button>
+            </div>
+          </div>
+
+          {/* Result */}
+          {result != null && (
+            <div className="ai-drawer__section">
+              <span className="ai-drawer__section-label">生成结果</span>
+              <div className="ai-drawer__result">
+                {summary && (
+                  <div className="ai-drawer__result-summary">{summary}</div>
+                )}
+                <pre className="ai-drawer__result-content">
+                  {typeof result === "string"
+                    ? result
+                    : JSON.stringify(result, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="ai-drawer__footer">
+          <button className="ghost" onClick={onClose}>
+            放弃
+          </button>
+          <button className="primary" onClick={apply} disabled={result == null}>
+            {applyLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Layout() {
   const [apps, setApps] = useState([]);
   const [toasts, setToasts] = useState([]);
@@ -909,69 +1052,73 @@ function CodePanel({
 }
 function RequirementsPanel({ app, version, toast, refresh }) {
   const [requirements, setRequirements] = useState(app.requirements || "");
-  const [instruction, setInstruction] = useState("");
-  const [refining, setRefining] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+
   useEffect(() => {
     setRequirements(app.requirements || "");
+    setSaved(false);
   }, [app.id]);
+
   const saveRequirements = async () => {
+    setSaving(true);
     try {
       const updated = await api(`/api/apps/${app.id}`, {
         method: "PATCH",
         body: JSON.stringify({ requirements }),
       });
-      toast("需求文档已保存", "success");
       setRequirements(updated.requirements || "");
-      await refresh();
-    } catch (e) {
-      toast(e.message, "error");
-    }
-  };
-  const refine = async () => {
-    if (!instruction.trim()) {
-      toast("请输入微调指令", "error");
-      return;
-    }
-    setRefining(true);
-    try {
-      const newVersion = await api(`/api/apps/${app.id}/refine`, {
-        method: "POST",
-        body: JSON.stringify({ instruction: instruction.trim() }),
-      });
-      toast(
-        `已生成 v${newVersion.number}：${newVersion.summary || "完成"}`,
-        "success",
-      );
-      setInstruction("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
       await refresh();
     } catch (e) {
       toast(e.message, "error");
     } finally {
-      setRefining(false);
+      setSaving(false);
     }
   };
-  const hasRequirements = (app.requirements || "").trim().length > 0;
+
+  const hasRequirements = requirements.trim().length > 0;
+
   return (
     <div className="tab-content">
-      <div className="panel-title">
-        <span>需求文档</span>
-        <span className="subtitle">
-          小程序最稳定的资产。描述业务逻辑、数据格式、边界条件，LLM
-          据此生成代码和测试。
-        </span>
+      {/* ── Toolbar ── */}
+      <div className="req-toolbar">
+        <div className="req-toolbar__left">
+          <span className="panel-title" style={{ marginBottom: 0 }}>
+            需求文档
+          </span>
+          <span className="subtitle">
+            小程序最稳定的资产。描述业务逻辑、数据格式、边界条件，LLM
+            据此生成代码和测试。
+          </span>
+        </div>
+        <div className="req-toolbar__actions">
+          <span className={`req-save-status ${saved ? "req-saved" : ""}`}>
+            {saved ? "✓ 已保存" : hasRequirements ? "已修改" : ""}
+          </span>
+          <button
+            className="ghost"
+            onClick={saveRequirements}
+            disabled={saving}
+          >
+            {saving ? "保存中…" : "💾 保存"}
+          </button>
+          <button className="primary" onClick={() => setAiOpen(true)}>
+            🤖 AI 优化
+          </button>
+        </div>
       </div>
-      <div className="requirements-toolbar">
-        <button className="btn primary" onClick={saveRequirements}>
-          保存需求文档
-        </button>
-        <span className="requirements-hint">
-          {hasRequirements ? "已保存" : "尚未保存需求文档"}
-        </span>
-      </div>
+
+      {/* ── 主编辑器 ── */}
       <textarea
         className="requirements-editor"
         value={requirements}
-        onChange={(e) => setRequirements(e.target.value)}
+        onChange={(e) => {
+          setRequirements(e.target.value);
+          setSaved(false);
+        }}
         placeholder={`# 程序需求文档
 
 ## 功能描述
@@ -996,36 +1143,28 @@ function RequirementsPanel({ app, version, toast, refresh }) {
 描述几个典型的使用场景...`}
         spellCheck={false}
       />
-      <div className="refine-section">
-        <h3>LLM 微调迭代</h3>
-        <p className="refine-desc">
-          输入微调指令，AI 会基于需求文档 + 当前代码 + 测试用例，生成新版本。
-          可多次迭代，逐步完善。
-        </p>
-        <div className="refine-input-row">
-          <input
-            className="refine-input"
-            value={instruction}
-            onChange={(e) => setInstruction(e.target.value)}
-            placeholder="例如：增加空数组校验；输出前按金额降序排列；用中文返回错误信息…"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") refine();
-            }}
-          />
-          <button
-            className="btn primary"
-            onClick={refine}
-            disabled={refining || !instruction.trim()}
-          >
-            {refining ? "生成中…" : "微调 →"}
-          </button>
-        </div>
-        {version?.revisedFrom && (
-          <div className="refine-history">
-            此版本基于 {version.revisedFrom.slice(0, 8)}... 微调生成
-          </div>
-        )}
-      </div>
+
+      {/* ── AI Drawer ── */}
+      <AIDrawer
+        open={aiOpen}
+        onClose={() => setAiOpen(false)}
+        title="优化需求文档"
+        goal="根据你的指令，对需求文档进行结构化优化。补充边界条件、明确输入输出格式、添加示例。"
+        context={requirements}
+        placeholder="例如：补充空数组输入的处理逻辑；增加错误码说明；用更结构化方式描述输出格式…"
+        onGenerate={async (instruction) => {
+          const res = await api(`/api/apps/${app.id}/refine-requirements`, {
+            method: "POST",
+            body: JSON.stringify({ instruction }),
+          });
+          return { summary: res.summary, result: res.refined };
+        }}
+        onApply={(_, refinedText) => {
+          setRequirements(refinedText);
+          setSaved(false);
+          toast("已应用 AI 优化结果，请保存。", "success");
+        }}
+      />
     </div>
   );
 }
@@ -1044,6 +1183,8 @@ function SchemaPanel({ version, app, toast, refresh }) {
   );
   const [inputError, setInputError] = useState(null);
   const [outputError, setOutputError] = useState(null);
+  const [aiSchemaOpen, setAiSchemaOpen] = useState(false);
+  const [aiSchemaTarget, setAiSchemaTarget] = useState("input");
   useEffect(() => {
     setInputText(
       currentInput
@@ -1166,6 +1307,10 @@ function SchemaPanel({ version, app, toast, refresh }) {
       toast(e.message, "error");
     }
   };
+  const openAiSchema = (target) => {
+    setAiSchemaTarget(target);
+    setAiSchemaOpen(true);
+  };
   const hasInput =
     currentInput &&
     currentInput.properties &&
@@ -1193,6 +1338,9 @@ function SchemaPanel({ version, app, toast, refresh }) {
               onClick={() => inferFromTests("input")}
             >
               从测试推断
+            </button>
+            <button className="text-btn" onClick={() => openAiSchema("input")}>
+              🤖 AI 生成
             </button>
             <button
               className="text-btn danger"
@@ -1229,6 +1377,9 @@ function SchemaPanel({ version, app, toast, refresh }) {
             >
               从测试推断
             </button>
+            <button className="text-btn" onClick={() => openAiSchema("output")}>
+              🤖 AI 生成
+            </button>
             <button
               className="text-btn danger"
               onClick={() => clearSchema("output")}
@@ -1264,22 +1415,74 @@ function SchemaPanel({ version, app, toast, refresh }) {
   "additionalProperties": false
 }`}</pre>
       </details>
+
+      {/* ── AI 生成 Schema Drawer ── */}
+      <AIDrawer
+        open={aiSchemaOpen}
+        onClose={() => setAiSchemaOpen(false)}
+        title={`生成${aiSchemaTarget === "input" ? "输入" : "输出"} Schema`}
+        goal={`根据「${app.name}」的需求文档、代码和测试用例，生成${aiSchemaTarget === "input" ? "输入" : "输出"} JSON Schema。`}
+        context={`程序：${app.name}\n描述：${app.description || "N/A"}\n需求：${app.requirements || "N/A"}\n代码：${version?.code?.slice(0, 300) || "无"}\n测试用例数：${version?.tests?.length || 0}`}
+        placeholder={`描述 Schema 的额外要求…（如：所有字段必填、age 字段需大于 0）`}
+        applyLabel="✓ 填入编辑器"
+        onGenerate={async (instruction) => {
+          const { schema } = await api(
+            `/api/versions/${version.id}/schema/generate`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                target: aiSchemaTarget,
+                instruction,
+              }),
+            },
+          );
+          return {
+            summary: `已生成 ${Object.keys(schema?.properties || {}).length} 个字段`,
+            result: JSON.stringify(schema, null, 2),
+          };
+        }}
+        onApply={(_, result) => {
+          if (aiSchemaTarget === "input") {
+            setInputText(result);
+            setInputError(null);
+          } else {
+            setOutputText(result);
+            setOutputError(null);
+          }
+          toast(
+            `${aiSchemaTarget === "input" ? "输入" : "输出"} Schema 已填入编辑器，请检查后保存。`,
+            "success",
+          );
+        }}
+      />
     </div>
   );
 }
 function TestPanel({ version, app, toast, refresh }) {
   const [tests, setTests] = useState([]);
-  const [testName, setTestName] = useState("");
-  const [testInput, setTestInput] = useState("{\n  \n}");
-  const [testOutput, setTestOutput] = useState("");
   const [testResults, setTestResults] = useState(null);
   const [running, setRunning] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [revising, setRevising] = useState(false);
+  // ── add modal state ──
+  const [addOpen, setAddOpen] = useState(false);
+  const [testName, setTestName] = useState("");
+  const [testInput, setTestInput] = useState("{\n  \n}");
+  const [testOutput, setTestOutput] = useState("");
+  // ── AI drawer states ──
+  const [aiReviseOpen, setAiReviseOpen] = useState(false);
+  const [aiTestGenOpen, setAiTestGenOpen] = useState(false);
+
   useEffect(() => {
     setTests(version?.tests || []);
     setTestResults(null);
   }, [version?.id]);
+
+  const openAdd = () => {
+    setAddOpen(true);
+    setTestName("");
+    setTestInput("{\n  \n}");
+    setTestOutput("");
+  };
 
   const addTest = async () => {
     try {
@@ -1296,14 +1499,13 @@ function TestPanel({ version, app, toast, refresh }) {
         }),
       });
       toast("测试用例已添加。", "success");
-      setTestName("");
-      setTestInput("{\n  \n}");
-      setTestOutput("");
+      setAddOpen(false);
       await refresh();
     } catch (e) {
       toast(e.message, "error");
     }
   };
+
   const removeTest = async (idx) => {
     try {
       await api(`/api/versions/${version.id}/tests/${idx}`, {
@@ -1315,19 +1517,7 @@ function TestPanel({ version, app, toast, refresh }) {
       toast(e.message, "error");
     }
   };
-  const generateTests = async () => {
-    setGenerating(true);
-    try {
-      const data = await api(`/api/versions/${version.id}/tests/generate`, {
-        method: "POST",
-      });
-      toast(`LLM 已生成 ${data.generated} 个测试用例`, "success");
-      await refresh();
-    } catch (e) {
-      toast(e.message, "error");
-    }
-    setGenerating(false);
-  };
+
   const runAllTests = async () => {
     setRunning(true);
     setTestResults(null);
@@ -1345,22 +1535,7 @@ function TestPanel({ version, app, toast, refresh }) {
     }
     setRunning(false);
   };
-  const revise = async () => {
-    setRevising(true);
-    try {
-      const data = await api(`/api/versions/${version.id}/revise`, {
-        method: "POST",
-      });
-      toast(
-        `LLM 已生成修订版本 v${data.version.number}：${data.version.summary}`,
-        "success",
-      );
-      await refresh();
-    } catch (e) {
-      toast(e.message, "error");
-    }
-    setRevising(false);
-  };
+
   const runSingleTest = async (idx) => {
     setRunning(true);
     try {
@@ -1401,37 +1576,79 @@ function TestPanel({ version, app, toast, refresh }) {
     setRunning(false);
   };
 
+  const failedCount = testResults ? testResults.total - testResults.passed : 0;
+  const failedTests =
+    testResults?.results?.filter((r) => r.actualStatus !== "succeeded") || [];
+
+  // build context for AI revise drawer
+  const reviseContext =
+    failedTests.length > 0
+      ? failedTests
+          .map(
+            (r, i) =>
+              `## 失败 #{i + 1}: ${r.name || ""}\n输入: ${JSON.stringify(r.input)}\n期望: ${JSON.stringify(r.expectedOutput)}\n实际: ${r.error ? r.error.message : JSON.stringify(r.result)}`,
+          )
+          .join("\n\n")
+      : "";
+
   return (
     <div className="tab-content">
-      <div className="test-layout">
-        <div className="test-list-panel">
-          <div className="panel-title">
-            <span>测试用例（{tests.length} 组）</span>
-            <span>
-              <button
-                className="text-btn"
-                onClick={generateTests}
-                disabled={generating || running}
-              >
-                {generating ? "生成中…" : "✨ 生成测试"}
-              </button>
-              <button
-                className="text-btn"
-                onClick={runAllTests}
-                disabled={running || !tests.length}
-              >
-                {running ? "运行中…" : "▶ 全部运行"}
-              </button>
-            </span>
+      {/* ── Toolbar ── */}
+      <div className="test-toolbar">
+        <div className="test-toolbar__left">
+          <span className="panel-title" style={{ marginBottom: 0 }}>
+            测试用例（{tests.length} 组）
+          </span>
+          <span className="subtitle">
+            验证程序功能的输入-输出对。建议至少 3 组涵盖正常、边界、异常场景。
+          </span>
+        </div>
+        <div className="test-toolbar__actions">
+          <button className="ghost" onClick={openAdd}>
+            + 手动添加
+          </button>
+          <button
+            className="ghost"
+            onClick={() => setAiTestGenOpen(true)}
+            disabled={running}
+          >
+            ✨ 生成测试
+          </button>
+          <button
+            className="primary"
+            onClick={runAllTests}
+            disabled={running || !tests.length}
+          >
+            {running ? "运行中…" : "▶ 全部运行"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── 测试结果 ── */}
+      {testResults && (
+        <div
+          className={`test-result-bar ${failedCount > 0 ? "test-result-bar--fail" : "test-result-bar--ok"}`}
+        >
+          <span
+            className={`test-summary ${testResults.passed === testResults.total ? "passed" : "failed"}`}
+          >
+            {testResults.passed}/{testResults.total} 通过
+          </span>
+          <button className="primary" onClick={() => setAiReviseOpen(true)}>
+            🤖 AI 修订
+          </button>
+        </div>
+      )}
+
+      {/* ── 测试列表（全宽） ── */}
+      <div className="test-list-full">
+        {tests.length === 0 ? (
+          <div className="empty-hint">
+            暂无测试用例。点击「✨ 生成测试」让 LLM 自动生成，或「+
+            手动添加」自定义测试。
           </div>
-          {tests.length === 0 && (
-            <div className="empty-hint">
-              暂无测试用例。至少需要 3
-              组测试数据来验证功能。在下方添加测试输入，或使用 "✨ 生成测试" 让
-              LLM 自动生成。
-            </div>
-          )}
-          {tests.map((test, idx) => (
+        ) : (
+          tests.map((test, idx) => (
             <div key={idx} className="test-item">
               <div className="test-item-head">
                 <span className="test-idx">#{idx + 1}</span>
@@ -1469,97 +1686,150 @@ function TestPanel({ version, app, toast, refresh }) {
                 )}
               </div>
             </div>
+          ))
+        )}
+      </div>
+
+      {/* ── 测试结果详情 ── */}
+      {testResults && testResults.results?.length > 0 && (
+        <div className="test-results-detail">
+          <div className="panel-title">
+            <span>结果详情</span>
+          </div>
+          {testResults.results.map((r, idx) => (
+            <div
+              key={idx}
+              className={`test-result-card ${r.actualStatus === "succeeded" ? "result-ok" : "result-fail"}`}
+            >
+              <div className="test-result-head">
+                <span>
+                  #{idx + 1} {r.name || ""}{" "}
+                  {r.actualStatus === "succeeded" ? "✓ 通过" : "✗ 失败"}
+                  {r.matched !== undefined &&
+                    (r.matched ? " 🎯 匹配" : " ⚠ 输出不匹配")}
+                </span>
+                <span>{r.durationMs}ms</span>
+              </div>
+              {r.error && <pre className="test-error">{r.error.message}</pre>}
+              {r.result && (
+                <pre className="test-output">
+                  {JSON.stringify(r.result, null, 2)}
+                </pre>
+              )}
+              {r.expectedOutput && (
+                <div className="test-expected">
+                  <span className="test-io-label">期望输出</span>
+                  <pre className="test-output">
+                    {JSON.stringify(r.expectedOutput, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
           ))}
         </div>
-        <div className="test-add-panel">
-          <div className="panel-title">
-            <span>添加测试用例</span>
-          </div>
-          <p className="test-hint">
-            为程序提供至少 3
-            组不同的输入，用于验证功能。每次保存新版本时，会复制已有版本的测试用例。
-          </p>
-          <label className="test-field-label">名称</label>
-          <input
-            className="test-name-input"
-            value={testName}
-            onChange={(e) => setTestName(e.target.value)}
-            placeholder="例如：空数组输入"
-          />
-          <label className="test-field-label">输入 JSON</label>
-          <textarea
-            className="code-input"
-            value={testInput}
-            onChange={(e) => setTestInput(e.target.value)}
-            spellCheck="false"
-            placeholder='{"key": "value"}'
-          />
-          <label className="test-field-label">期望输出 JSON（可选）</label>
-          <textarea
-            className="code-input test-output-input"
-            value={testOutput}
-            onChange={(e) => setTestOutput(e.target.value)}
-            spellCheck="false"
-            placeholder='{"ok": true}'
-          />
-          <button onClick={addTest} disabled={!testInput.trim()}>
-            + 添加测试用例
-          </button>
-          {testResults && (
-            <div className="test-results">
-              <div className="panel-title">
-                <span>测试结果</span>
-                <span
-                  className={`test-summary ${testResults.passed === testResults.total ? "passed" : "failed"}`}
-                >
-                  {testResults.passed}/{testResults.total} 通过
-                </span>
-              </div>
-              {testResults.passed < testResults.total && (
-                <button
-                  className="revise-btn"
-                  onClick={revise}
-                  disabled={revising || running}
-                >
-                  {revising ? "LLM 修订中…" : "🤖 LLM 自动修订"}
-                </button>
-              )}
-              {testResults.results?.map((r, idx) => (
-                <div
-                  key={idx}
-                  className={`test-result ${r.actualStatus === "succeeded" ? "result-ok" : "result-fail"}`}
-                >
-                  <div className="test-result-head">
-                    <span>
-                      #{idx + 1} {r.name || ""}{" "}
-                      {r.actualStatus === "succeeded" ? "✓ 通过" : "✗ 失败"}
-                      {r.matched !== undefined &&
-                        (r.matched ? " 🎯 匹配" : " ⚠ 输出不匹配")}
-                    </span>
-                    <span>{r.durationMs}ms</span>
-                  </div>
-                  {r.error && (
-                    <pre className="test-error">{r.error.message}</pre>
-                  )}
-                  {r.result && (
-                    <pre className="test-output">
-                      {JSON.stringify(r.result, null, 2)}
-                    </pre>
-                  )}
-                  {r.expectedOutput && (
-                    <div className="test-expected">
-                      <span className="test-io-label">期望输出</span>
-                      <pre className="test-output">
-                        {JSON.stringify(r.expectedOutput, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              ))}
+      )}
+
+      {/* ── 手动添加 Modal ── */}
+      {addOpen && (
+        <div className="modal-overlay" onClick={() => setAddOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal__header">
+              <h3>手动添加测试用例</h3>
+              <button className="ghost" onClick={() => setAddOpen(false)}>
+                ✕
+              </button>
             </div>
-          )}
+            <div className="modal__body">
+              <label className="test-field-label">名称</label>
+              <input
+                className="test-name-input"
+                value={testName}
+                onChange={(e) => setTestName(e.target.value)}
+                placeholder="例如：空数组输入"
+              />
+              <label className="test-field-label">输入 JSON</label>
+              <textarea
+                className="code-input"
+                value={testInput}
+                onChange={(e) => setTestInput(e.target.value)}
+                spellCheck="false"
+                placeholder='{"key": "value"}'
+              />
+              <label className="test-field-label">期望输出 JSON（可选）</label>
+              <textarea
+                className="code-input"
+                value={testOutput}
+                onChange={(e) => setTestOutput(e.target.value)}
+                spellCheck="false"
+                placeholder='{"ok": true}'
+              />
+            </div>
+            <div className="modal__footer">
+              <button className="ghost" onClick={() => setAddOpen(false)}>
+                取消
+              </button>
+              <button onClick={addTest} disabled={!testInput.trim()}>
+                + 添加测试用例
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ── AI 修订 Drawer ── */}
+      <AIDrawer
+        open={aiReviseOpen}
+        onClose={() => setAiReviseOpen(false)}
+        title="修正代码"
+        goal="根据失败的测试用例，修正代码逻辑，使所有测试通过。"
+        context={reviseContext || "（无失败用例，可自由描述期望的改进方向）"}
+        placeholder="告诉 AI 从哪个方向修正…（如：输出字段名应为 camelCase）"
+        onGenerate={async (instruction) => {
+          const data = await api(`/api/versions/${version.id}/revise`, {
+            method: "POST",
+            body: JSON.stringify({ hint: instruction }),
+          });
+          return {
+            summary: `修订版本 v${data.version.number}`,
+            result: data.version.summary,
+          };
+        }}
+        onApply={async () => {
+          toast("LLM 修订已生成新版本。", "success");
+          await refresh();
+        }}
+        applyLabel="✓ 应用并刷新"
+      />
+
+      {/* ── AI 生成测试 Drawer ── */}
+      <AIDrawer
+        open={aiTestGenOpen}
+        onClose={() => setAiTestGenOpen(false)}
+        title="生成测试用例"
+        goal={`根据「${app.name}」的需求，生成覆盖正常、边界、异常场景的测试用例。`}
+        context={`程序：${app.name}\n${app.description ? `描述：${app.description}` : ""}\n已有测试：${tests.length} 组`}
+        placeholder="告诉 AI 关注哪些场景…（可选）"
+        onGenerate={async (instruction) => {
+          setGenerating(true);
+          try {
+            const data = await api(
+              `/api/versions/${version.id}/tests/generate`,
+              { method: "POST", body: JSON.stringify({ instruction }) },
+            );
+            return {
+              summary: `已生成 ${data.generated} 个测试用例`,
+              result: data.generated,
+            };
+          } finally {
+            setGenerating(false);
+          }
+        }}
+        onApply={async () => {
+          toast("测试用例已生成。", "success");
+          await refresh();
+        }}
+        applyLabel="✓ 应用并刷新"
+      />
     </div>
   );
 }
@@ -2687,16 +2957,47 @@ function DocsPanel({
       {deployment && (
         <section className="deployment">
           <h3>发布成功</h3>
-          <p>GET 调用（浏览器直接打开）：</p>
+          <p>当前版本：v{invokeDocs?.publishedVersion?.number || "?"}</p>
+          <hr />
+          <p className="deployment__label">
+            🔗 浮动调用（始终跟随最新发布版本）：
+          </p>
+          <p>GET（浏览器）：</p>
           <code>{getUrl}</code>
           <button className="ghost" onClick={() => copy(getUrl)}>
             复制
           </button>
-          <p>POST 调用（curl）：</p>
+          <p>POST（curl）：</p>
           <code>{curlCmd}</code>
           <button className="ghost" onClick={() => copy(curlCmd)}>
             复制
           </button>
+          {invokeDocs?.examples?.pinnedCurl && (
+            <>
+              <hr />
+              <p className="deployment__label">
+                📌 钉选版本（始终调用 v{invokeDocs.publishedVersion.number}
+                ，不受后续发布影响）：
+              </p>
+              <p>GET（浏览器）：</p>
+              <code>{invokeDocs.methods?.get?.pinnedUrl}</code>
+              <button
+                className="ghost"
+                onClick={() => copy(invokeDocs.methods?.get?.pinnedUrl || "")}
+              >
+                复制
+              </button>
+              <p>POST（curl）：</p>
+              <code>{invokeDocs.examples.pinnedCurl}</code>
+              <button
+                className="ghost"
+                onClick={() => copy(invokeDocs.examples.pinnedCurl || "")}
+              >
+                复制
+              </button>
+            </>
+          )}
+          <hr />
           <p>Bearer key（仅显示一次）</p>
           <code className="secret">{deployment.webhookKey}</code>
           <button className="ghost" onClick={() => copy(deployment.webhookKey)}>
@@ -2711,6 +3012,12 @@ function DocsPanel({
           <div className="doc-section">
             <h4>接口地址</h4>
             <code>{invokeUrl}</code>
+            <p className="docs-note">
+              发布后还支持版本钉选：
+              <code>/invoke-version/{app.code || "app-code"}/1</code>、
+              <code>/invoke-version/{app.code || "app-code"}/2</code>{" "}
+              等，始终调用指定版本不受后续发布影响。
+            </p>
           </div>
           <div className="doc-section">
             <h4>支持的方法</h4>
@@ -2848,9 +3155,9 @@ function RuntimePage() {
 function PagesPanel({ app, toast, refresh }) {
   const [pages, setPages] = useState([]);
   const [loadingPages, setLoadingPages] = useState(true);
-  const [editing, setEditing] = useState(null); // { id, name, pageConfig, processScript }
+  const [editing, setEditing] = useState(null);
   const [isNew, setIsNew] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [aiPageOpen, setAiPageOpen] = useState(false);
 
   useEffect(() => {
     setLoadingPages(true);
@@ -2947,34 +3254,6 @@ function PagesPanel({ app, toast, refresh }) {
     }
   };
 
-  const generateWithLLM = async () => {
-    if (!editing || !editing.name.trim()) {
-      toast("请先输入页面名称和描述", "error");
-      return;
-    }
-    setGenerating(true);
-    try {
-      const { pageConfig } = await api(`/api/ai/generate-page`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: editing.name,
-          description: editing.name,
-          appName: app.name,
-          appDescription: app.description,
-        }),
-      });
-      setEditing((prev) => ({
-        ...prev,
-        pageConfig: JSON.stringify(pageConfig, null, 2),
-      }));
-      toast("页面配置已生成", "success");
-    } catch (e) {
-      toast(e.message, "error");
-    } finally {
-      setGenerating(false);
-    }
-  };
-
   return (
     <div className="tab-content">
       <div className="editor-head">
@@ -2994,12 +3273,8 @@ function PagesPanel({ app, toast, refresh }) {
           <div className="pages-editor-head">
             <h3>{isNew ? "创建页面" : `编辑：${editing.name}`}</h3>
             <div>
-              <button
-                className="ghost"
-                onClick={generateWithLLM}
-                disabled={generating}
-              >
-                {generating ? "生成中…" : "🤖 AI 生成配置"}
+              <button className="ghost" onClick={() => setAiPageOpen(true)}>
+                🤖 AI 生成配置
               </button>
               <button className="ghost" onClick={cancel}>
                 取消
@@ -3106,6 +3381,35 @@ function PagesPanel({ app, toast, refresh }) {
           )}
         </div>
       )}
+
+      {/* ── AI 生成页面配置 Drawer ── */}
+      <AIDrawer
+        open={aiPageOpen}
+        onClose={() => setAiPageOpen(false)}
+        title="生成页面配置"
+        goal={`为「${editing?.name || ""}」生成 PageConfig JSON 配置。`}
+        context={`程序：${app.name}\n${app.description ? `描述：${app.description}` : ""}`}
+        placeholder="告诉 AI 页面需要哪些组件和布局…（如：一个数据表格 + 一个图表）"
+        onGenerate={async (instruction) => {
+          const { pageConfig } = await api(`/api/ai/generate-page`, {
+            method: "POST",
+            body: JSON.stringify({
+              name: editing?.name || "",
+              description: instruction,
+              appName: app.name,
+              appDescription: app.description,
+            }),
+          });
+          return {
+            summary: `已生成 ${pageConfig?.regions?.length || 0} 个区域`,
+            result: JSON.stringify(pageConfig, null, 2),
+          };
+        }}
+        onApply={(_, result) => {
+          setEditing((prev) => (prev ? { ...prev, pageConfig: result } : prev));
+          toast("页面配置已应用。", "success");
+        }}
+      />
     </div>
   );
 }
