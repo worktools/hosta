@@ -513,7 +513,13 @@ ${errorSummary || "Unknown error"}
 Return JSON: {"summary": "what was fixed", "code": "async function main(input, ctx) { ... }", "tests": [{"name": "...", "input": {...}, "expectedOutput": {...}}]}`,
 
   /** 页面配置生成 prompt */
-  generatePage: ({ name, appName, appDescription, instruction, datasourceContext }) => {
+  generatePage: ({
+    name,
+    appName,
+    appDescription,
+    instruction,
+    datasourceContext,
+  }) => {
     const dsSection = datasourceContext
       ? `\n## Data Source\nAvailable data for this page: ${datasourceContext}\n\nYou can bind data to components using the "dataSources" field in PageConfig. Each binding maps a regionId to a data field path.`
       : "";
@@ -1592,14 +1598,26 @@ async function deepSeekRefineRequirements({
     model,
   };
 }
-async function deepSeekGeneratePage({ name, appName, appDescription, instruction, datasourceContext }) {
+async function deepSeekGeneratePage({
+  name,
+  appName,
+  appDescription,
+  instruction,
+  datasourceContext,
+}) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not configured");
   const base = (
     process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
   ).replace(/\/$/, "");
   const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-  const prompt = PROMPTS.generatePage({ name, appName, appDescription, instruction, datasourceContext });
+  const prompt = PROMPTS.generatePage({
+    name,
+    appName,
+    appDescription,
+    instruction,
+    datasourceContext,
+  });
   const response = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
