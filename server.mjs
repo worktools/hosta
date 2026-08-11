@@ -357,48 +357,143 @@ ${errorSummary || "Unknown error"}
 Return JSON: {"summary": "what was fixed", "code": "async function main(input, ctx) { ... }", "tests": [{"name": "...", "input": {...}, "expectedOutput": {...}}]}`,
 
   /** 页面配置生成 prompt */
-  generatePage: ({ name, appName, appDescription }) =>
-    `You are a UI designer for a mini-app platform. Generate a PageConfig JSON for a page in the app "${appName}".
+  generatePage: ({ name, appName, appDescription, instruction, datasourceContext }) => {
+    const dsSection = datasourceContext
+      ? `\n## Data Source\nAvailable data for this page: ${datasourceContext}\n\nYou can bind data to components using the "dataSources" field in PageConfig. Each binding maps a regionId to a data field path.`
+      : "";
+    return `You are a UI designer for a mini-app platform. Generate a PageConfig JSON for a page named "${name}" in the app "${appName}".
 
 The app description: ${appDescription || "N/A"}
-The page name: ${name}
+${instruction ? `\nUser instruction: ${instruction}` : ""}${dsSection}
 
-Return JSON only with the key "pageConfig". The pageConfig must follow this TypeScript interface:
+Return JSON only with the key "pageConfig". The pageConfig must follow this schema:
 
 interface PageConfig {
-  version: string; // always "1"
+  version: "1.0";
   layout: { type: "grid" | "flex" | "tabs" | "free"; config: Record<string, unknown> };
   regions: Array<{
-    id: string;
+    id: string; // region_xxx
     position: { row: number; col: number; rowSpan?: number; colSpan?: number };
-    component: {
-      type: string; // one of: button, input, select, form, table, card, modal, tabs, datePicker, layout, chart, checkbox, radio, switch, slider, inputNumber, rate, tag, divider, badge, space, empty, skeleton, progress, alert, avatar, statistic, link, breadcrumb, steps, timeline, collapse, list, result, descriptions, pagination, segmented, drawer, popover, image, timePicker, tree, tooltip
-      id?: string;
-      props: Record<string, unknown>;
-      children?: ComponentConfig[];
-    };
+    component: ComponentConfig;
   }>;
+  dataSources?: Array<{ id: string; binding: Array<{ regionId: string; field: string }> }>;
 }
 
-Design a complete, professional-looking page. Use appropriate components.
-For grid layout, use config: { columns: number, gap?: number }.
-Common props:
-- card: { title, children, bordered, hoverable }
-- table: { columns: [{key, title, dataIndex}], dataSource: [{key, ...}] }
-- stat: { title, value }
-- chart: { type: "line"|"bar"|"pie", data: {labels, datasets}, width, height }
-- button: { children, variant: "primary"|"secondary"|"danger", size: "small"|"medium"|"large" }
-- input: { placeholder, label }
-- tag: { children, color: "blue"|"green"|"red"|"orange" }
-- space: { direction: "horizontal"|"vertical", size: "small"|"medium"|"large", children: ComponentConfig[] }
-- divider: { orientation: "horizontal"|"vertical" }
-- alert: { message, type: "info"|"success"|"warning"|"error" }
-- progress: { percent: number }
-- link: { children, href }
-- list: { dataSource: [{key, ...}], renderItem: {type: string, props: ...} }
-- tabs: { tabs: [{key, title, children: ComponentConfig[]}], activeKey, tabPosition: "top"|"left"|"right"|"bottom", type: "line"|"card" }
+interface ComponentConfig {
+  type: string;
+  id?: string;
+  props: Record<string, unknown>;
+  children?: ComponentConfig[];
+}
 
-Return: {"pageConfig": { ... }}`,
+## Available Components & Their Props
+
+**card** — Container with title and children
+  { title?: string, bordered?: boolean, shadow?: "none"|"hover"|"always", padding?: string|number, loading?: boolean, children?: ComponentConfig[] }
+
+**table** — Data table
+  { columns: Array<{ field: string, title: string, width?: string|number, sortable?: boolean, align?: "left"|"center"|"right" }>, data?: Array<Record<string, unknown>>, dataSource?: string, bordered?: boolean, striped?: boolean, hoverable?: boolean, pagination?: { pageSize?: number, currentPage?: number }, emptyText?: string, rowKey?: string }
+
+**chart** — ECharts-based chart
+  { chartType: "line"|"area"|"bar"|"pie"|"scatter"|"radar"|"funnel"|"gauge"|"bubble", option?: Record<string, unknown>, dataSource?: string, data?: unknown[], xField?: string, yField?: string, nameField?: string, valueField?: string, seriesField?: string, title?: string, height?: string|number }
+
+**form** — Form container
+  { layout?: "horizontal"|"vertical"|"inline", labelWidth?: string|number, labelAlign?: "left"|"right"|"top", colon?: boolean, items: ComponentConfig[] }
+
+**button** — Button
+  { type?: "primary"|"normal"|"danger"|"text", size?: "small"|"medium"|"large"|"huge", label: string, icon?: string, loading?: boolean, block?: boolean, href?: string, target?: "_blank"|"_self", action?: { type: "submit"|"navigate"|"custom", config?: Record<string, unknown> } }
+
+**input** — Text input
+  { name: string, label?: string, type?: "text"|"textarea"|"password", placeholder?: string, value?: string, maxlength?: number, clearable?: boolean, readonly?: boolean, rows?: number, status?: "default"|"success"|"warning"|"error", size?: "small"|"medium"|"large" }
+
+**select** — Dropdown select
+  { name: string, label?: string, placeholder?: string, options: Array<{ label: string, value: string|number }>, multiple?: boolean, clearable?: boolean, filterable?: boolean, size?: "small"|"medium"|"large" }
+
+**statistic** — Number/metric display
+  { title?: string, value?: number|string, precision?: number, prefix?: string, suffix?: string }
+
+**tag** — Tag/label
+  { label?: string, color?: "default"|"primary"|"success"|"warning"|"error"|"info", type?: "solid"|"hollow"|"plain", size?: "small"|"medium"|"large", round?: boolean, closable?: boolean }
+
+**alert** — Alert/notification
+  { type?: "info"|"success"|"warning"|"error", title?: string, description?: string, closable?: boolean, showIcon?: boolean }
+
+**progress** — Progress bar
+  { type?: "bar"|"circle", percent: number, status?: "default"|"success"|"warning"|"error", showText?: boolean, strokeWidth?: number }
+
+**steps** — Steps indicator
+  { current?: number, direction?: "horizontal"|"vertical", type?: "default"|"dot", items: Array<{ title: string, description?: string, status?: "wait"|"process"|"finish"|"error" }> }
+
+**tabs** — Tabbed container
+  { tabs?: Array<{ key: string, title: string, children?: ComponentConfig[] }>, tabPosition?: "top"|"bottom"|"left"|"right", type?: "line"|"card", activeKey?: string }
+
+**space** — Flexible spacing wrapper
+  { direction?: "horizontal"|"vertical", size?: number|string, wrap?: boolean, align?: "start"|"center"|"end"|"baseline", children?: ComponentConfig[] }
+
+**divider** — Divider line
+  { direction?: "horizontal"|"vertical", dashed?: boolean, contentPosition?: "left"|"center"|"right" }
+
+**link** — Hyperlink
+  { href?: string, target?: "_blank"|"_self"|"_parent"|"_top", underline?: boolean, prefix?: string, suffix?: string }
+
+**avatar** — User avatar
+  { size?: "small"|"medium"|"large"|number, src?: string, alt?: string, shape?: "circle"|"square" }
+
+**badge** — Badge indicator
+  { value?: number|string, max?: number, dot?: boolean, color?: "default"|"primary"|"success"|"warning"|"error" }
+
+**skeleton** — Loading placeholder
+  { loading?: boolean, rows?: number, title?: boolean, avatar?: boolean, animation?: "pulse"|"wave" }
+
+**empty** — Empty state
+  { description?: string, imageSize?: number }
+
+**result** — Result feedback
+  { status: "success"|"error"|"info"|"warning", title: string, subtitle?: string }
+
+**descriptions** — Key-value info display
+  { title?: string, column?: number, bordered?: boolean, items: Array<{ label: string, value: string|number }> }
+
+**list** — Simple list
+  { bordered?: boolean, items: Array<{ title: string, subtitle?: string, description?: string, avatar?: string }> }
+
+**timeline** — Timeline display
+  { items: Array<{ title: string, timestamp?: string, desc?: string, color?: string }> }
+
+**breadcrumb** — Breadcrumb navigation
+  { separator?: string, items: Array<{ label: string, href?: string }> }
+
+**pagination** — Pagination
+  { total: number, defaultCurrent?: number, defaultPageSize?: number, showSizeChanger?: boolean, showJumper?: boolean, size?: "small"|"default" }
+
+**segmented** — Segmented control
+  { options: Array<{ label: string, value: string }>, value?: string, defaultValue?: string, block?: boolean, size?: "small"|"medium"|"large" }
+
+**layout** — Nested grid/flex layout
+  { type?: "grid"|"flex", direction?: "row"|"column", gap?: number|string, columns?: number, items: ComponentConfig[] }
+
+## Common Scenario Patterns
+
+1. **Dashboard / Analytics** — Use grid layout with statistic cards in row 1, charts in row 2, table in row 3. Chart types: bar for comparisons, pie for distribution, line for trends.
+2. **Data CRUD** — Use form for search filters (row 1), space with buttons for actions (row 2), table for data display (row 3). Include pagination on table.
+3. **Detail Page** — Use descriptions for key-value data, card with children for sections, timeline for activity log, steps for progress tracking.
+4. **List/Browse** — Use segmented for filtering, table with sortable columns, pagination, space for action buttons.
+5. **Form/Wizard** — Use steps for progress, form with items array, result for success/error state.
+6. **Monitoring/Status** — Use alert for warnings, progress for metrics, statistic for KPIs, chart with chartType "gauge" for real-time status.
+
+## Data Binding Pattern
+When data is available, use the "dataSources" field to bind data to regions:
+{ "dataSources": [{ "id": "ds1", "binding": [{ "regionId": "region_stats", "field": "summary" }, { "regionId": "region_table", "field": "items" }] }] }
+
+## Layout Guidelines
+- Grid layout: use config { columns: 12, gap: 16 } for responsive dashboards
+- Statistic cards: rowSpan: 1, colSpan: 3 (4 per row in 12-column grid)
+- Full-width charts: colSpan: 12, rowSpan: depends on data
+- Tables: colSpan: 12 for full-width data display
+- Form items: colSpan: 4 or 6 for inline form fields
+
+Return: {"pageConfig": { ... }}`;
+  },
 };
 
 // ── 数据持久化 ────────────────────────────────────────────────────────────────
@@ -1341,14 +1436,14 @@ async function deepSeekRefineRequirements({
     model,
   };
 }
-async function deepSeekGeneratePage({ name, appName, appDescription }) {
+async function deepSeekGeneratePage({ name, appName, appDescription, instruction, datasourceContext }) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not configured");
   const base = (
     process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
   ).replace(/\/$/, "");
   const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-  const prompt = PROMPTS.generatePage({ name, appName, appDescription });
+  const prompt = PROMPTS.generatePage({ name, appName, appDescription, instruction, datasourceContext });
   const response = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
@@ -3528,7 +3623,7 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
         appId: app.id,
         name: String(payload.name).trim().slice(0, 200),
         pageConfig: payload.pageConfig || {
-          version: "1",
+          version: "1.0",
           layout: { type: "grid", config: {} },
           regions: [],
         },
@@ -3637,10 +3732,28 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
       if (!name)
         return error(res, 400, "VALIDATION_ERROR", "Page name is required");
       try {
+        // Build datasource context if appId is provided
+        let datasourceContext = null;
+        if (input.appId) {
+          const ds = datasourceByAppId(input.appId);
+          if (ds) {
+            const dataKeys = Object.keys(ds.data || {});
+            const schemaDesc = ds.schema
+              ? `Schema: ${JSON.stringify(ds.schema).slice(0, 500)}`
+              : "";
+            datasourceContext = dataKeys.length
+              ? `Top-level data fields: ${dataKeys.join(", ")}. ${schemaDesc}`
+              : "No data populated yet, but a datasource exists. " + schemaDesc;
+          } else {
+            datasourceContext = "No datasource configured for this app.";
+          }
+        }
         const result = await deepSeekGeneratePage({
           name,
           appName: String(input.appName || ""),
           appDescription: String(input.appDescription || ""),
+          instruction: String(input.description || ""),
+          datasourceContext,
         });
         return json(res, 200, result);
       } catch (e) {

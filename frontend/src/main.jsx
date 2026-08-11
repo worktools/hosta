@@ -3389,7 +3389,7 @@ function PagesPanel({ app, toast, refresh }) {
         title="生成页面配置"
         goal={`为「${editing?.name || ""}」生成 PageConfig JSON 配置。`}
         context={`程序：${app.name}\n${app.description ? `描述：${app.description}` : ""}`}
-        placeholder="告诉 AI 页面需要哪些组件和布局…（如：一个数据表格 + 一个图表）"
+        placeholder="描述你想要的页面：仪表盘/数据表格/详情页/表单... 可附加具体需求如「显示订单列表，带搜索和分页」"
         onGenerate={async (instruction) => {
           const { pageConfig } = await api(`/api/ai/generate-page`, {
             method: "POST",
@@ -3398,6 +3398,7 @@ function PagesPanel({ app, toast, refresh }) {
               description: instruction,
               appName: app.name,
               appDescription: app.description,
+              appId: app.id,
             }),
           });
           return {
