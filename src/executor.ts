@@ -23,11 +23,27 @@ import type { Version, Run, ExecuteOptions } from "./types.js";
  * 设置为 true 时，JS 执行走 hoya 的 rquickjs 引擎（② 级沙箱），
  * 而非 Node.js 的 vm.createContext（① 级）。
  *
- * 环境变量：HOYA_ENABLED=true
+ * 环境变量：HOYA_ENABLED=true（启动时读取）
  * 二进制路径：HOYA_BINARY（默认 "hoya"）
  * 端口：HOYA_PORT（默认 4300）
+ *
+ * 运行时可通过 getHoyaEnabled() / setHoyaEnabled() 查询和切换。
  */
-const HOYA_ENABLED = process.env.HOYA_ENABLED === "true";
+let hoyaEnabled = process.env.HOYA_ENABLED === "true";
+
+/** 查询当前沙箱级别 */
+export function getHoyaEnabled(): boolean {
+  return hoyaEnabled;
+}
+
+/** 运行时切换沙箱级别（不持久化，重启后失效） */
+export function setHoyaEnabled(value: boolean): void {
+  hoyaEnabled = value;
+  if (!value) {
+    // 关闭 hoya 时停止子进程以释放资源
+    import("./hoya-client.js").then((c) => c.stopHoya?.()).catch(() => {});
+  }
+}
 let hoyaClient: typeof import("./hoya-client.js") | null = null;
 let hoyaStartPromise: Promise<typeof import("./hoya-client.js")> | null = null;
 
@@ -230,7 +246,7 @@ export async function execute(
 
     const logs: Array<{ level: string; message: string; at: string }> = [];
     if (runtime === "wasm") {
-      if (HOYA_ENABLED) {
+      if (hoyaEnabled) {
         // 使用 hoya 沙箱（wasmtime 引擎，③ 级，带 fuel/内存限额）
         const datasourceData = ds ? JSON.parse(JSON.stringify(ds.data)) : {};
         const hoyaResult = await executeWasmWithHoya(
@@ -291,7 +307,7 @@ export async function execute(
     }
 
     // JavaScript 执行
-    if (HOYA_ENABLED) {
+    if (hoyaEnabled) {
       // 使用 hoya 沙箱（rquickjs 引擎，② 级）
       const datasourceData = ds ? JSON.parse(JSON.stringify(ds.data)) : {};
       const hoyaResult = await executeWithHoya(

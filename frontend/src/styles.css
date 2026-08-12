@@ -219,6 +219,36 @@ nav a.active {
   line-height: 1.6;
 }
 
+.sandbox-indicator {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 6px;
+  transition: background 0.2s;
+}
+.sandbox-vm {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+.sandbox-hoya {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+.sandbox-indicator:hover {
+  opacity: 0.8;
+}
+
+.sidebar-info {
+  font-size: 0.7rem;
+  color: var(--cds-text-placeholder);
+}
+
 /* ── Main Content Area ────────────────────────────────────────────── */
 
 main {

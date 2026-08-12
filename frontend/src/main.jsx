@@ -299,6 +299,7 @@ function Layout() {
   const [apps, setApps] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [stats, setStats] = useState(null);
+  const [sandbox, setSandbox] = useState(null);
   const toast = useCallback((message, type = "info") => {
     const id = ++toastId;
     setToasts((prev) => [...prev.slice(-4), { id, message, type }]);
@@ -314,10 +315,26 @@ function Layout() {
     const data = await api("/api/apps");
     setApps(data);
   }, []);
+  const toggleSandbox = useCallback(async () => {
+    const next = !sandbox || sandbox.level !== "hoya";
+    try {
+      const r = await api("/api/admin/sandbox", {
+        method: "POST",
+        body: JSON.stringify({ enabled: next }),
+      });
+      setSandbox(r.sandbox);
+      toast(next ? "已切换至 hoya 沙箱 (② 级)" : "已切换至 vm.createContext (① 级)", "success");
+    } catch (e) {
+      toast("切换沙箱失败: " + e.message, "error");
+    }
+  }, [sandbox, toast]);
   useEffect(() => {
     refresh().catch((e) => toast(e.message, "error"));
     api("/api/stats")
       .then(setStats)
+      .catch(() => {});
+    api("/api/admin/status")
+      .then((s) => setSandbox(s.sandbox))
       .catch(() => {});
   }, []);
   const location = useLocation();
@@ -357,9 +374,19 @@ function Layout() {
           ))}
         </div>
         <div className="sidebar-bottom">
-          Local workspace
-          <br />
-          DeepSeek ready
+          <div
+            className={`sandbox-indicator ${sandbox && sandbox.level === "hoya" ? "sandbox-hoya" : "sandbox-vm"}`}
+            onClick={toggleSandbox}
+            title="点击切换沙箱引擎"
+          >
+            {sandbox
+              ? sandbox.level === "hoya"
+                ? "🛡 ② hoya"
+                : "🔓 ① vm"
+              : "⏳ …"}
+          </div>
+          <div className="sidebar-info">Local workspace</div>
+          <div className="sidebar-info">DeepSeek ready</div>
         </div>
       </aside>
       <main>
