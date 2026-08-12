@@ -96,7 +96,8 @@ export async function startHoya(
   const env = {
     ...process.env,
     PORT: String(hoyaOptions.port),
-    HOYA_AUTH_TOKEN: hoyaAuthToken ?? (hoyaAuthToken = randomBytes(24).toString("hex")),
+    HOYA_AUTH_TOKEN:
+      hoyaAuthToken ?? (hoyaAuthToken = randomBytes(24).toString("hex")),
   };
 
   console.log(`[hoya-client] Starting hoya on port ${hoyaOptions.port}...`);
@@ -127,7 +128,9 @@ export async function startHoya(
       intentionalStop = false;
       return;
     }
-    console.error("[hoya-client] hoya exited unexpectedly, scheduling restart...");
+    console.error(
+      "[hoya-client] hoya exited unexpectedly, scheduling restart...",
+    );
     scheduleRestart();
   });
 
@@ -156,7 +159,9 @@ function scheduleRestart(): void {
   }
   restartAttempts += 1;
   const delayMs = Math.min(1000 * 2 ** restartAttempts, 30_000);
-  console.log(`[hoya-client] restarting hoya in ${delayMs}ms (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})`);
+  console.log(
+    `[hoya-client] restarting hoya in ${delayMs}ms (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})`,
+  );
   setTimeout(() => {
     startHoya(hoyaOptions).catch((err) => {
       console.error("[hoya-client] restart attempt failed:", err);
