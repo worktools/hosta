@@ -6,18 +6,19 @@
 
 ## RFC 状态
 
-| RFC                                         | 标题                           | 状态                  |
-| ------------------------------------------- | ------------------------------ | --------------------- |
-| [0001](0001-product-scope.md)               | 产品边界与 MVP                 | Accepted for planning |
-| [0002](0002-mvp-architecture.md)            | MVP 架构与技术选型             | Accepted (updated)    |
-| [0003](0003-main-flow.md)                   | 生成、试运行与发布主流程       | Accepted for planning |
-| [0004](0004-delivery-plan.md)               | 交付计划与验收标准             | Accepted for planning |
-| [0005](0005-platform-vision.md)             | 平台愿景与 Vercel 式开发者体验 | Proposed              |
-| [0006](0006-ui-hierarchy.md)                | 界面层级设计与信息架构         | Proposed              |
-| [0007](0007-llm-api-exploration.md)         | LLM API 自动探索与智能生成     | Proposed              |
-| [0008](0008-iteration-management.md)        | 全生命周期迭代管理             | Proposed              |
-| [0009](0009-inter-app-and-external-data.md) | 小程序互联与外部数据源接入     | Proposed              |
-| [0010](0010-wasm-jspi-error-handling.md)     | WASM Host 错误处理与 JSPI Reject 语义 | Proposed（探索已验证） |
+| RFC                                          | 标题                                            | 状态                   |
+| -------------------------------------------- | ----------------------------------------------- | ---------------------- |
+| [0001](0001-product-scope.md)                | 产品边界与 MVP                                  | Accepted for planning  |
+| [0002](0002-mvp-architecture.md)             | MVP 架构与技术选型                              | Accepted (updated)     |
+| [0003](0003-main-flow.md)                    | 生成、试运行与发布主流程                        | Accepted for planning  |
+| [0004](0004-delivery-plan.md)                | 交付计划与验收标准                              | Accepted for planning  |
+| [0005](0005-platform-vision.md)              | 平台愿景与 Vercel 式开发者体验                  | Proposed               |
+| [0006](0006-ui-hierarchy.md)                 | 界面层级设计与信息架构                          | Proposed               |
+| [0007](0007-llm-api-exploration.md)          | LLM API 自动探索与智能生成                      | Proposed               |
+| [0008](0008-iteration-management.md)         | 全生命周期迭代管理                              | Proposed               |
+| [0009](0009-inter-app-and-external-data.md)  | 小程序互联与外部数据源接入                      | Proposed               |
+| [0010](0010-wasm-jspi-error-handling.md)     | WASM Host 错误处理与 JSPI Reject 语义           | Proposed（探索已验证） |
+| [0011](0011-llm-sandbox-landscape-survey.md) | LLM 生成代码执行沙箱——业界方案综述与 Hosta 定位 | Informational          |
 
 ## 已确定的方向
 
@@ -38,4 +39,5 @@ Hosta 定位为**以 LLM 代码生成为核心的、面向轻量级小程序（m
 - `Proposed`：讨论中。
 - `Accepted for planning`：可作为实现依据，开发过程中仍可通过新 RFC 修订。
 - `Implemented`：实现和验收条件均已完成。
+- `Informational`：背景调研/知识整理，不代表已批准的实现决策。
 - 重要范围或架构变化应新增 RFC，不静默改写已经落地的决策。
