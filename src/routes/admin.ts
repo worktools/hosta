@@ -47,7 +47,13 @@ export function registerAdminRoutes(
     (async () => {
       const input = await body(req);
       const confirm = String(input.confirm || "");
-      if (confirm !== "RESET") return error(res, 400, "CONFIRMATION_REQUIRED", "Send {\"confirm\":\"RESET\"} to confirm");
+      if (confirm !== "RESET")
+        return error(
+          res,
+          400,
+          "CONFIRMATION_REQUIRED",
+          'Send {"confirm":"RESET"} to confirm',
+        );
       // Clear all application data
       store.apps = [];
       store.versions = [];
@@ -61,7 +67,10 @@ export function registerAdminRoutes(
       store.pages = [];
       store.externalDatasources = [];
       await save();
-      json(res, 200, { status: "ok", message: "All application data has been reset" });
+      json(res, 200, {
+        status: "ok",
+        message: "All application data has been reset",
+      });
     })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
     return true;
   }
@@ -72,7 +81,12 @@ export function registerAdminRoutes(
       global.gc();
       json(res, 200, { status: "ok", timestamp: now(), action: "forced_gc" });
     } else {
-      json(res, 200, { status: "ok", timestamp: now(), action: "no_gc_flag", hint: "Run with --expose-gc" });
+      json(res, 200, {
+        status: "ok",
+        timestamp: now(),
+        action: "no_gc_flag",
+        hint: "Run with --expose-gc",
+      });
     }
     return true;
   }

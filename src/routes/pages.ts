@@ -59,11 +59,13 @@ export function registerPageRoutes(
         id: id("page"),
         appId: app.id,
         name: String(payload.name).trim().slice(0, 200),
-        pageConfig: (payload.pageConfig as PageConfig) || {
-          version: "1.0",
-          layout: { type: "grid", config: {} },
-          regions: [],
-        } as PageConfig,
+        pageConfig:
+          (payload.pageConfig as PageConfig) ||
+          ({
+            version: "1.0",
+            layout: { type: "grid", config: {} },
+            regions: [],
+          } as PageConfig),
         processScript: String(payload.processScript || ""),
         createdAt: now(),
         updatedAt: now(),

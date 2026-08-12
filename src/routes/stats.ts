@@ -22,9 +22,14 @@ export function registerStatsRoutes(
       if (r.logs && r.logs.length) {
         for (const l of r.logs.slice(-5)) {
           recentLogs.push({
-            runId: r.id, appId: r.appId,
+            runId: r.id,
+            appId: r.appId,
             appName: (appById(r.appId) || {}).name || "",
-            versionNumber: r.versionNumber, level: l.level, message: l.message, fields: l.fields, at: l.at,
+            versionNumber: r.versionNumber,
+            level: l.level,
+            message: l.message,
+            fields: l.fields,
+            at: l.at,
           });
         }
       }
@@ -33,7 +38,14 @@ export function registerStatsRoutes(
     for (const r of allRuns) {
       const app = appById(r.appId);
       const key = app ? app.name : r.appId;
-      if (!perApp[key]) perApp[key] = { total: 0, succeeded: 0, failed: 0, timed_out: 0, rejected: 0 };
+      if (!perApp[key])
+        perApp[key] = {
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+          timed_out: 0,
+          rejected: 0,
+        };
       perApp[key].total++;
       perApp[key][r.status] = (perApp[key][r.status] || 0) + 1;
     }
@@ -41,15 +53,28 @@ export function registerStatsRoutes(
     for (const r of allRuns) {
       const app = appById(r.appId);
       const key = `${app?.name || r.appId} / v${r.versionNumber || "?"}`;
-      if (!perVersion[key]) perVersion[key] = { appId: r.appId, versionNumber: r.versionNumber || 0, total: 0, succeeded: 0, failed: 0, timed_out: 0 };
+      if (!perVersion[key])
+        perVersion[key] = {
+          appId: r.appId,
+          versionNumber: r.versionNumber || 0,
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+          timed_out: 0,
+        };
       perVersion[key].total++;
       perVersion[key][r.status] = (perVersion[key][r.status] || 0) + 1;
     }
     json(res, 200, {
-      totalRuns: allRuns.length, byStatus,
+      totalRuns: allRuns.length,
+      byStatus,
       recentLogs: recentLogs.slice(-100),
-      perApp: Object.entries(perApp).map(([name, s]) => ({ name, ...s } as any)),
-      perVersion: Object.entries(perVersion).map(([name, s]) => ({ name, ...s } as any)).sort((a: any, b: any) => b.total - a.total),
+      perApp: Object.entries(perApp).map(
+        ([name, s]) => ({ name, ...s }) as any,
+      ),
+      perVersion: Object.entries(perVersion)
+        .map(([name, s]) => ({ name, ...s }) as any)
+        .sort((a: any, b: any) => b.total - a.total),
       totalApps: store.apps.length,
       totalPublished: store.apps.filter((a) => a.publishedVersionId).length,
     });
@@ -60,18 +85,27 @@ export function registerStatsRoutes(
   const appRunsMatch = url.pathname.match(/^\/api\/apps\/([^/]+)\/runs$/);
   if (appRunsMatch) {
     const app = appById(appRunsMatch[1]);
-    if (!app) return error(res, 404, "NOT_FOUND", "App not found"), true;
-    const runs = store.runs.filter((r) => r.appId === app.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+    if (!app) return (error(res, 404, "NOT_FOUND", "App not found"), true);
+    const runs = store.runs
+      .filter((r) => r.appId === app.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 100);
     json(res, 200, { appId: app.id, runs });
     return true;
   }
 
   // GET /api/versions/:id/runs
-  const versionRunsMatch = url.pathname.match(/^\/api\/versions\/([^/]+)\/runs$/);
+  const versionRunsMatch = url.pathname.match(
+    /^\/api\/versions\/([^/]+)\/runs$/,
+  );
   if (versionRunsMatch) {
     const version = versionById(versionRunsMatch[1]);
-    if (!version) return error(res, 404, "NOT_FOUND", "Version not found"), true;
-    const runs = store.runs.filter((r) => r.versionId === version.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+    if (!version)
+      return (error(res, 404, "NOT_FOUND", "Version not found"), true);
+    const runs = store.runs
+      .filter((r) => r.versionId === version.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 100);
     json(res, 200, { versionId: version.id, runs });
     return true;
   }

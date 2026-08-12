@@ -51,8 +51,14 @@ export function registerAppRoutes(
           ? versionById(app.publishedVersionId)
           : null;
         const tests = publishedVersion?.tests || [];
-        const inputSchema = inferSchemaFromTests(tests as unknown as Record<string, unknown>[], "input");
-        const outputSchema = inferSchemaFromTests(tests as unknown as Record<string, unknown>[], "expectedOutput");
+        const inputSchema = inferSchemaFromTests(
+          tests as unknown as Record<string, unknown>[],
+          "input",
+        );
+        const outputSchema = inferSchemaFromTests(
+          tests as unknown as Record<string, unknown>[],
+          "expectedOutput",
+        );
         const capabilities = inferCapabilities(publishedVersion || {});
         const callExample = app.code
           ? `const result = await ctx.call('${app.code}', { /* input */ });`
@@ -91,7 +97,8 @@ export function registerAppRoutes(
           "VALIDATION_ERROR",
           "Name and description are required",
         );
-      const runtime: "javascript" | "wasm" = input.runtime === "wasm" ? "wasm" : "javascript";
+      const runtime: "javascript" | "wasm" =
+        input.runtime === "wasm" ? "wasm" : "javascript";
       const language: "javascript" | "rust" | "moonbit" =
         runtime === "wasm" && input.language === "moonbit"
           ? "moonbit"

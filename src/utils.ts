@@ -1,4 +1,8 @@
-import { createHash, randomUUID, randomBytes as cryptoRandomBytes } from "node:crypto";
+import {
+  createHash,
+  randomUUID,
+  randomBytes as cryptoRandomBytes,
+} from "node:crypto";
 import type { ServerResponse, IncomingMessage } from "node:http";
 import type {
   Store,
@@ -320,15 +324,17 @@ export function publicApp(app: App): PublicApp {
       .filter((r) => r.appId === app.id)
       .slice(-20)
       .reverse(),
-    pages: (store.pages || []).filter((p) => p.appId === app.id).map((p) => ({
-  id: p.id,
-  appId: p.appId,
-  name: p.name,
-  pageConfig: p.pageConfig,
-  createdAt: p.createdAt,
-  updatedAt: p.updatedAt,
-  processScript: p.processScript,
-})),
+    pages: (store.pages || [])
+      .filter((p) => p.appId === app.id)
+      .map((p) => ({
+        id: p.id,
+        appId: p.appId,
+        name: p.name,
+        pageConfig: p.pageConfig,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+        processScript: p.processScript,
+      })),
   };
 }
 

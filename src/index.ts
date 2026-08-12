@@ -25,7 +25,10 @@ function contentType(file: string): string {
       : "text/html; charset=utf-8";
 }
 
-async function staticFile(res: ServerResponse, pathname: string): Promise<boolean> {
+async function staticFile(
+  res: ServerResponse,
+  pathname: string,
+): Promise<boolean> {
   const requested = pathname === "/" ? "index.html" : pathname.slice(1);
   const file = resolve(staticDir, requested);
   if (!file.startsWith(`${staticDir}/`) && file !== `${staticDir}/index.html`) {
@@ -57,17 +60,21 @@ const routeRegistrars = [
 
 // ── 服务器 ────────────────────────────────────────────────────────────────────
 
-const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-  const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  const method = req.method!;
+const server = createServer(
+  async (req: IncomingMessage, res: ServerResponse) => {
+    const url = new URL(
+      req.url || "/",
+      `http://${req.headers.host || "localhost"}`,
+    );
+    const method = req.method!;
 
-  try {
-    // ── 特殊路由 ──────────────────────────────────────────────────────
+    try {
+      // ── 特殊路由 ──────────────────────────────────────────────────────
 
-    // /llms.txt — LLM 上下文描述
-    if (method === "GET" && url.pathname === "/llms.txt") {
-      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-      res.end(`# Hosta API
+      // /llms.txt — LLM 上下文描述
+      if (method === "GET" && url.pathname === "/llms.txt") {
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+        res.end(`# Hosta API
 
 Hosta creates and hosts short JavaScript or WebAssembly functions.
 
@@ -119,68 +126,98 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 - wasm/moonbit: submit MoonBit source defining pub fn run() -> Int. Hosta compiles with moon build --target wasm. (JSPI async not yet supported for MoonBit)
 - The compiled WASM binary is stored server-side; agents must submit source, not base64 modules.
 `);
-      return;
+        return;
+      }
+
+      // /health
+      if (method === "GET" && url.pathname === "/health") {
+        json(res, 200, {
+          status: "healthy",
+          service: "hosta",
+          generator: process.env.DEEPSEEK_API_KEY ? "deepseek" : "local-demo",
+        });
+        return;
+      }
+
+      // POST /api/sample-input
+      if (method === "POST" && url.pathname === "/api/sample-input") {
+        (async () => {
+          const input = await body(req);
+          const description = String(input.description || "").trim();
+          if (!description)
+            return error(
+              res,
+              400,
+              "VALIDATION_ERROR",
+              "Description is required to generate a sample input",
+            );
+          const runtime = input.runtime === "wasm" ? "wasm" : "javascript";
+          const { deepSeekSample } = await import("./llm.js");
+          json(res, 200, await deepSeekSample({ description, runtime }));
+        })().catch((e) =>
+          error(
+            res,
+            502,
+            "MODEL_ERROR",
+            `Sample generation failed: ${e.message}`,
+          ),
+        );
+        return;
+      }
+
+      // POST /api/format
+      if (method === "POST" && url.pathname === "/api/format") {
+        (async () => {
+          const input = await body(req);
+          const code = String(input.code || "");
+          if (!code)
+            return error(
+              res,
+              400,
+              "VALIDATION_ERROR",
+              "Code is required to format",
+            );
+          const runtime = input.runtime === "wasm" ? "wasm" : "javascript";
+          const language =
+            runtime === "wasm" && input.language === "moonbit"
+              ? "moonbit"
+              : runtime === "wasm"
+                ? "rust"
+                : "javascript";
+          const { formatCode } = await import("./compiler.js");
+          try {
+            json(res, 200, await formatCode({ code, runtime, language }));
+          } catch (e: any) {
+            error(res, 400, "FORMAT_ERROR", e.message);
+          }
+        })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
+        return;
+      }
+
+      // ── 模块化路由 ────────────────────────────────────────────────────
+      for (const register of routeRegistrars) {
+        if (register(req, res, url)) return;
+      }
+
+      // ── 静态文件 ──────────────────────────────────────────────────────
+      if (method === "GET" && (await staticFile(res, url.pathname))) return;
+
+      // SPA fallback
+      if (method === "GET" && (await staticFile(res, "/"))) return;
+
+      // 404
+      error(res, 404, "NOT_FOUND", "Route not found");
+    } catch (err: any) {
+      console.error(err);
+      error(
+        res,
+        err.status || 500,
+        "INTERNAL_ERROR",
+        err.message || "Unexpected error",
+      );
     }
-
-    // /health
-    if (method === "GET" && url.pathname === "/health") {
-      json(res, 200, {
-        status: "healthy",
-        service: "hosta",
-        generator: process.env.DEEPSEEK_API_KEY ? "deepseek" : "local-demo",
-      });
-      return;
-    }
-
-    // POST /api/sample-input
-    if (method === "POST" && url.pathname === "/api/sample-input") {
-      (async () => {
-        const input = await body(req);
-        const description = String(input.description || "").trim();
-        if (!description) return error(res, 400, "VALIDATION_ERROR", "Description is required to generate a sample input");
-        const runtime = input.runtime === "wasm" ? "wasm" : "javascript";
-        const { deepSeekSample } = await import("./llm.js");
-        json(res, 200, await deepSeekSample({ description, runtime }));
-      })().catch((e) => error(res, 502, "MODEL_ERROR", `Sample generation failed: ${e.message}`));
-      return;
-    }
-
-    // POST /api/format
-    if (method === "POST" && url.pathname === "/api/format") {
-      (async () => {
-        const input = await body(req);
-        const code = String(input.code || "");
-        if (!code) return error(res, 400, "VALIDATION_ERROR", "Code is required to format");
-        const runtime = input.runtime === "wasm" ? "wasm" : "javascript";
-        const language = runtime === "wasm" && input.language === "moonbit" ? "moonbit" : runtime === "wasm" ? "rust" : "javascript";
-        const { formatCode } = await import("./compiler.js");
-        try {
-          json(res, 200, await formatCode({ code, runtime, language }));
-        } catch (e: any) {
-          error(res, 400, "FORMAT_ERROR", e.message);
-        }
-      })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
-      return;
-    }
-
-    // ── 模块化路由 ────────────────────────────────────────────────────
-    for (const register of routeRegistrars) {
-      if (register(req, res, url)) return;
-    }
-
-    // ── 静态文件 ──────────────────────────────────────────────────────
-    if (method === "GET" && (await staticFile(res, url.pathname))) return;
-
-    // SPA fallback
-    if (method === "GET" && (await staticFile(res, "/"))) return;
-
-    // 404
-    error(res, 404, "NOT_FOUND", "Route not found");
-  } catch (err: any) {
-    console.error(err);
-    error(res, err.status || 500, "INTERNAL_ERROR", err.message || "Unexpected error");
-  }
-});
+  },
+);
 
 // ── 启动 ──────────────────────────────────────────────────────────────────────
 

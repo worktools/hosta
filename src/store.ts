@@ -11,7 +11,18 @@ async function loadStore(): Promise<Store> {
     return JSON.parse(await readFile(dataFile, "utf8"));
   } catch (error: any) {
     if (error.code !== "ENOENT") throw error;
-    return { apps: [], versions: [], deployments: [], runs: [], schedules: [], modelCalls: [], datasources: [], datasourceSnapshots: [], externalDatasources: [], pages: [] };
+    return {
+      apps: [],
+      versions: [],
+      deployments: [],
+      runs: [],
+      schedules: [],
+      modelCalls: [],
+      datasources: [],
+      datasourceSnapshots: [],
+      externalDatasources: [],
+      pages: [],
+    };
   }
 }
 
