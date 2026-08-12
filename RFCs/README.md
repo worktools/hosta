@@ -19,6 +19,7 @@
 | [0009](0009-inter-app-and-external-data.md)  | 小程序互联与外部数据源接入                      | Proposed               |
 | [0010](0010-wasm-jspi-error-handling.md)     | WASM Host 错误处理与 JSPI Reject 语义           | Proposed（探索已验证） |
 | [0011](0011-llm-sandbox-landscape-survey.md) | LLM 生成代码执行沙箱——业界方案综述与 Hosta 定位 | Informational          |
+| [0012](0012-hoya-sandbox-security-review.md) | Hoya 低成本沙箱安全审查与演进建议                | Informational          |
 
 ## 已确定的方向
 
