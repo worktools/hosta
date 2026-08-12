@@ -1,0 +1,13 @@
+options(
+  link: {
+    "wasm-gc": {
+      "use-js-builtin-string": true,
+      "exports": [ "run:main" ],
+    },
+  },
+)
+
+import {
+  "moonbitlang/core/json",
+}
+

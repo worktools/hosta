@@ -17,6 +17,7 @@
 | [0007](0007-llm-api-exploration.md)         | LLM API 自动探索与智能生成     | Proposed              |
 | [0008](0008-iteration-management.md)        | 全生命周期迭代管理             | Proposed              |
 | [0009](0009-inter-app-and-external-data.md) | 小程序互联与外部数据源接入     | Proposed              |
+| [0010](0010-wasm-jspi-error-handling.md)     | WASM Host 错误处理与 JSPI Reject 语义 | Proposed（探索已验证） |
 
 ## 已确定的方向
 
