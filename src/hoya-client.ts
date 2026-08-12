@@ -12,7 +12,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:http";
+import { randomBytes } from "node:crypto";
 import { request as httpRequest } from "node:http";
 
 // ── 配置 ──────────────────────────────────────────────────────────────────────
@@ -72,6 +72,8 @@ export interface WasmExecuteRequest {
 let hoyaProcess: ChildProcess | null = null;
 let hoyaOptions: Required<HoyaClientOptions> = DEFAULT_OPTIONS;
 let hoyaReady = false;
+/** 每次启动随机生成的共享密钥，通过环境变量传给 hoya 子进程，仅同一台机器上的调用者可用 */
+let hoyaAuthToken: string | null = null;
 
 /**
  * 启动 hoya 子进程，等待其就绪。
@@ -89,6 +91,7 @@ export async function startHoya(
   const env = {
     ...process.env,
     PORT: String(hoyaOptions.port),
+    HOYA_AUTH_TOKEN: hoyaAuthToken ?? (hoyaAuthToken = randomBytes(24).toString("hex")),
   };
 
   console.log(`[hoya-client] Starting hoya on port ${hoyaOptions.port}...`);
@@ -178,6 +181,7 @@ function hoyaRequest(
       headers: {
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(bodyStr),
+        ...(hoyaAuthToken ? { Authorization: `Bearer ${hoyaAuthToken}` } : {}),
       },
     };
 

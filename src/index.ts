@@ -14,6 +14,7 @@ import { registerAdminRoutes } from "./routes/admin.js";
 import { registerStatsRoutes } from "./routes/stats.js";
 import { registerDeploymentRoutes } from "./routes/deployment.js";
 import { registerPublishRoutes, armAllSchedules } from "./routes/publish.js";
+import { stopHoya, isHoyaRunning } from "./hoya-client.js";
 
 // ── 静态文件服务 ──────────────────────────────────────────────────────────────
 
@@ -226,3 +227,21 @@ server.listen(port, "127.0.0.1", () => {
   armAllSchedules();
   console.log(`Hosta listening on http://127.0.0.1:${port}`);
 });
+
+// ── 优雅退出 — 确保 hoya sidecar 子进程不会变成孤儿进程 ──────────────────────────
+
+let shuttingDown = false;
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Hosta received ${signal}, shutting down...`);
+  if (isHoyaRunning()) {
+    await stopHoya().catch((err) => console.error("Error stopping hoya:", err));
+  }
+  server.close(() => process.exit(0));
+  // Force exit if server.close() hangs (e.g. keep-alive connections)
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
