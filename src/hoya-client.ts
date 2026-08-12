@@ -74,6 +74,11 @@ let hoyaOptions: Required<HoyaClientOptions> = DEFAULT_OPTIONS;
 let hoyaReady = false;
 /** 每次启动随机生成的共享密钥，通过环境变量传给 hoya 子进程，仅同一台机器上的调用者可用 */
 let hoyaAuthToken: string | null = null;
+/** stopHoya() 设置此标记，区分主动停止与意外崩溩，避免主动停止时触发自动重启 */
+let intentionalStop = false;
+/** 连续意外崩溩次数，超过上限就放弃重启，避免 crash loop */
+let restartAttempts = 0;
+const MAX_RESTART_ATTEMPTS = 5;
 
 /**
  * 启动 hoya 子进程，等待其就绪。
@@ -118,6 +123,12 @@ export async function startHoya(
     console.log(`[hoya-client] hoya exited (code=${code}, signal=${signal})`);
     hoyaProcess = null;
     hoyaReady = false;
+    if (intentionalStop) {
+      intentionalStop = false;
+      return;
+    }
+    console.error("[hoya-client] hoya exited unexpectedly, scheduling restart...");
+    scheduleRestart();
   });
 
   hoyaProcess.on("error", (err) => {
@@ -129,7 +140,28 @@ export async function startHoya(
   // 等待 hoya 服务就绪（轮询 health endpoint）
   await waitForReady(5_000);
   hoyaReady = true;
+  restartAttempts = 0;
   console.log("[hoya-client] hoya is ready");
+}
+
+/**
+ * hoya 意外退出后按指数退避自动重启，达到次数上限后放弃。
+ */
+function scheduleRestart(): void {
+  if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
+    console.error(
+      `[hoya-client] hoya crashed ${restartAttempts} times in a row, giving up automatic restart`,
+    );
+    return;
+  }
+  restartAttempts += 1;
+  const delayMs = Math.min(1000 * 2 ** restartAttempts, 30_000);
+  console.log(`[hoya-client] restarting hoya in ${delayMs}ms (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})`);
+  setTimeout(() => {
+    startHoya(hoyaOptions).catch((err) => {
+      console.error("[hoya-client] restart attempt failed:", err);
+    });
+  }, delayMs);
 }
 
 /**
@@ -137,6 +169,7 @@ export async function startHoya(
  */
 export async function stopHoya(): Promise<void> {
   if (!hoyaProcess) return;
+  intentionalStop = true;
   hoyaProcess.kill("SIGTERM");
   // 等待最多 3 秒优雅退出
   await new Promise<void>((resolve) => {

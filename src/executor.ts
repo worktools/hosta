@@ -29,16 +29,27 @@ import type { Version, Run, ExecuteOptions } from "./types.js";
  */
 const HOYA_ENABLED = process.env.HOYA_ENABLED === "true";
 let hoyaClient: typeof import("./hoya-client.js") | null = null;
+let hoyaStartPromise: Promise<typeof import("./hoya-client.js")> | null = null;
 
 async function ensureHoyaClient() {
-  if (!hoyaClient) {
-    hoyaClient = await import("./hoya-client.js");
-    await hoyaClient.startHoya({
-      binaryPath: process.env.HOYA_BINARY || "hoya",
-      port: Number(process.env.HOYA_PORT) || 4300,
+  if (hoyaClient) return hoyaClient;
+  // Guard against concurrent callers each spawning their own hoya process:
+  // the first caller creates the start promise, everyone else awaits it.
+  if (!hoyaStartPromise) {
+    hoyaStartPromise = (async () => {
+      const client = await import("./hoya-client.js");
+      await client.startHoya({
+        binaryPath: process.env.HOYA_BINARY || "hoya",
+        port: Number(process.env.HOYA_PORT) || 4300,
+      });
+      hoyaClient = client;
+      return client;
+    })().catch((err) => {
+      hoyaStartPromise = null; // allow retry on next call
+      throw err;
     });
   }
-  return hoyaClient;
+  return hoyaStartPromise;
 }
 
 /**
