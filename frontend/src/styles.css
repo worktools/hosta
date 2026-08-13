@@ -2218,6 +2218,92 @@ textarea {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   Schedules Panel
+   ═══════════════════════════════════════════════════════════════════ */
+
+.schedule-form {
+  padding: var(--sp-05);
+  margin-bottom: var(--sp-05);
+  background: var(--cds-layer);
+  border: 1px solid var(--cds-border-subtle);
+  border-radius: 8px;
+}
+
+.schedule-type-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.schedule-type-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--cds-border-subtle);
+  background: var(--cds-bg);
+  font-size: 0.75rem;
+  color: var(--cds-text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.schedule-type-btn.active {
+  background: var(--cds-interactive);
+  color: #fff;
+  border-color: var(--cds-interactive);
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--sp-04);
+}
+
+.form-row label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--cds-text-secondary);
+}
+
+.form-row select,
+.schedule-time-input,
+.schedule-cron-input {
+  padding: 6px 10px;
+  border: 1px solid var(--cds-border-subtle);
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  background: var(--cds-bg);
+  color: var(--cds-text-primary);
+  max-width: 240px;
+}
+
+.schedule-input-json {
+  padding: 8px 10px;
+  border: 1px solid var(--cds-border-subtle);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-family: "IBM Plex Mono", monospace;
+  background: var(--code-bg);
+  color: #e2e8f0;
+  max-width: 480px;
+  resize: vertical;
+}
+
+.form-hint {
+  font-size: 0.6875rem;
+  color: var(--cds-text-placeholder);
+}
+
+.schedule-type-tag {
+  display: inline-block;
+  font-size: 0.6875rem;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  background: var(--cds-bg-secondary);
+  color: var(--cds-text-secondary);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    Call Chain
    ═══════════════════════════════════════════════════════════════════ */
 

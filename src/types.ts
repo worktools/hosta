@@ -87,7 +87,10 @@ export interface Schedule {
   appId: string;
   versionId: string;
   input: Record<string, unknown>;
+  scheduleType: "interval" | "daily" | "cron";
   intervalSeconds: number;
+  dailyAt: string | null;
+  cronExpression: string | null;
   status: "active" | "disabled";
   createdAt: string;
   nextRunAt: string;

@@ -35,7 +35,9 @@ export function registerAdminRoutes(
       },
       sandbox: {
         level: getHoyaEnabled() ? "hoya" : "vm",
-        label: getHoyaEnabled() ? "② hoya (rquickjs + wasmtime)" : "① vm.createContext",
+        label: getHoyaEnabled()
+          ? "② hoya (rquickjs + wasmtime)"
+          : "① vm.createContext",
         hoyaRunning: isHoyaRunning(),
       },
       uptimeSeconds: Math.floor(process.uptime()),
@@ -53,7 +55,9 @@ export function registerAdminRoutes(
         status: "ok",
         sandbox: {
           level: enabled ? "hoya" : "vm",
-          label: enabled ? "② hoya (rquickjs + wasmtime)" : "① vm.createContext",
+          label: enabled
+            ? "② hoya (rquickjs + wasmtime)"
+            : "① vm.createContext",
           hoyaRunning: isHoyaRunning(),
         },
       });

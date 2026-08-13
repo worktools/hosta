@@ -107,6 +107,11 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 - POST /hooks/:id with Authorization: Bearer <deployment key> invokes a deployment by id.
 - DELETE /api/apps/:id deletes an application, versions, deployments, schedules and runs.
 
+## Schedules
+- GET /api/apps/:id/schedules lists all schedules for an app.
+- POST /api/apps/:id/schedules creates a schedule. body: {scheduleType: "interval"|"daily"|"cron", versionId?, input?, intervalSeconds?, dailyAt?, cronExpression?}. interval: min 600s (10min), max 86400s. daily: dailyAt in HH:mm format (e.g. 08:30). cron: standard 5-field cron expression (e.g. "0 * * * *" for every hour).
+- DELETE /api/schedules/:id disables a schedule.
+
 ## Pages & UI (Generative UI)
 - GET /api/apps/:id/pages — list all pages for an app.
 - POST /api/apps/:id/pages — create a page. body: {name, pageConfig?, processScript?}. pageConfig is a version "1.0" PageConfig JSON (layout + regions + optional dataSources). processScript is a JavaScript function body: (input, datasource) => processedData.

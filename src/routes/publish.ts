@@ -26,6 +26,19 @@ export function registerScheduleRoutes(
   const method = req.method!;
 
   const scheduleMatch = url.pathname.match(/^\/api\/apps\/([^/]+)\/schedules$/);
+
+  // GET — list schedules for an app
+  if (method === "GET" && scheduleMatch) {
+    const app = appById(scheduleMatch[1]);
+    if (!app) return (error(res, 404, "NOT_FOUND", "App not found"), true);
+    const schedules = store.schedules
+      .filter((s) => s.appId === app.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    json(res, 200, schedules);
+    return true;
+  }
+
+  // POST — create a schedule
   if (method === "POST" && scheduleMatch) {
     (async () => {
       const app = appById(scheduleMatch[1]);
@@ -37,7 +50,6 @@ export function registerScheduleRoutes(
           app.draftVersionId ||
           "",
       );
-      const intervalSeconds = Number(payload.intervalSeconds);
       if (!version || version.appId !== app.id || version.status !== "ready")
         return error(
           res,
@@ -45,27 +57,106 @@ export function registerScheduleRoutes(
           "NOT_SCHEDULABLE",
           "A ready version is required",
         );
-      if (
-        !Number.isInteger(intervalSeconds) ||
-        intervalSeconds < 60 ||
-        intervalSeconds > 86400
-      )
+
+      const scheduleType = (payload.scheduleType as string) || "interval";
+      if (!["interval", "daily", "cron"].includes(scheduleType))
         return error(
           res,
           400,
           "VALIDATION_ERROR",
-          "Interval must be between 60 and 86400 seconds",
+          "scheduleType must be one of: interval, daily, cron",
         );
+
+      let nextRunAtStr: string;
+      let intervalSeconds = 0;
+      const input =
+        (payload.input as Record<string, unknown>) ?? app.sampleInput ?? {};
+
+      if (scheduleType === "interval") {
+        intervalSeconds = Number(payload.intervalSeconds);
+        if (
+          !Number.isInteger(intervalSeconds) ||
+          intervalSeconds < 600 ||
+          intervalSeconds > 86400
+        )
+          return error(
+            res,
+            400,
+            "VALIDATION_ERROR",
+            "intervalSeconds must be between 600 (10min) and 86400 (24h)",
+          );
+        nextRunAtStr = new Date(
+          Date.now() + intervalSeconds * 1000,
+        ).toISOString();
+      } else if (scheduleType === "daily") {
+        const dailyAt = (payload.dailyAt as string) || "00:00";
+        if (!/^\d{2}:\d{2}$/.test(dailyAt))
+          return error(
+            res,
+            400,
+            "VALIDATION_ERROR",
+            "dailyAt must be in HH:mm format (e.g. 08:30)",
+          );
+        const [h, m] = dailyAt.split(":").map(Number);
+        if (h < 0 || h > 23 || m < 0 || m > 59)
+          return error(
+            res,
+            400,
+            "VALIDATION_ERROR",
+            "dailyAt hours must be 0-23, minutes 0-59",
+          );
+        const now = new Date();
+        const next = new Date(
+          Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate(),
+            h,
+            m,
+          ),
+        );
+        if (next.getTime() <= now.getTime()) {
+          next.setUTCDate(next.getUTCDate() + 1);
+        }
+        nextRunAtStr = next.toISOString();
+        intervalSeconds = 86400;
+      } else {
+        // cron
+        const cronExpression = (payload.cronExpression as string) || "";
+        if (
+          !/^(\*|\d{1,2})(\s+(\*|\d{1,2})){4}$/.test(cronExpression.trim())
+        )
+          return error(
+            res,
+            400,
+            "VALIDATION_ERROR",
+            "cronExpression must be a 5-field cron expression (e.g. '*/30 * * * *')",
+          );
+        const nextRun = nextCronTime(cronExpression.trim());
+        if (!nextRun)
+          return error(
+            res,
+            400,
+            "VALIDATION_ERROR",
+            "Cannot compute next run time from cron expression",
+          );
+        nextRunAtStr = nextRun.toISOString();
+        intervalSeconds = 600;
+      }
+
       const schedule = {
         id: id("sch"),
         appId: app.id,
         versionId: version.id,
-        input:
-          (payload.input as Record<string, unknown>) ?? app.sampleInput ?? {},
+        input,
+        scheduleType: scheduleType as "interval" | "daily" | "cron",
         intervalSeconds,
+        dailyAt: scheduleType === "daily" ? (payload.dailyAt as string) : null,
+        cronExpression:
+          scheduleType === "cron" ? (payload.cronExpression as string) : null,
         status: "active" as const,
         createdAt: now(),
-        nextRunAt: new Date(Date.now() + intervalSeconds * 1000).toISOString(),
+        nextRunAt: nextRunAtStr,
         lastRunAt: null,
         lastRunId: null,
       };
@@ -97,10 +188,13 @@ export function registerScheduleRoutes(
 export function armSchedule(schedule: {
   id: string;
   status: string;
+  scheduleType: string;
   nextRunAt: string;
   versionId: string;
   input: Record<string, unknown>;
   intervalSeconds: number;
+  dailyAt?: string | null;
+  cronExpression?: string | null;
 }): void {
   const old = scheduleTimers.get(schedule.id);
   if (old) clearTimeout(old);
@@ -116,13 +210,97 @@ export function armSchedule(schedule: {
       const run = await execute(version, latest.input, "schedule");
       latest.lastRunId = run.id;
       latest.lastRunAt = now();
-      latest.nextRunAt = new Date(
-        Date.now() + latest.intervalSeconds * 1000,
-      ).toISOString();
+
+      // Compute next run time based on schedule type
+      if (latest.scheduleType === "daily" && latest.dailyAt) {
+        const [h, m] = latest.dailyAt.split(":").map(Number);
+        const next = new Date();
+        next.setUTCHours(h, m, 0, 0);
+        if (next.getTime() <= Date.now()) {
+          next.setUTCDate(next.getUTCDate() + 1);
+        }
+        latest.nextRunAt = next.toISOString();
+      } else if (latest.scheduleType === "cron" && latest.cronExpression) {
+        const next = nextCronTime(latest.cronExpression);
+        latest.nextRunAt = next
+          ? next.toISOString()
+          : new Date(Date.now() + 600 * 1000).toISOString();
+      } else {
+        latest.nextRunAt = new Date(
+          Date.now() + latest.intervalSeconds * 1000,
+        ).toISOString();
+      }
+
       await save();
       armSchedule(latest);
     }, delay),
   );
+}
+
+// ── Cron helper ────────────────────────────────────────────────────────────────
+
+function nextCronTime(expr: string): Date | null {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [minStr, hourStr, dayStr, monthStr, weekdayStr] = parts;
+
+  const parseField = (f: string, min: number, max: number): number[] => {
+    if (f === "*") {
+      const vals: number[] = [];
+      for (let i = min; i <= max; i++) vals.push(i);
+      return vals;
+    }
+    if (f.startsWith("*/")) {
+      const step = parseInt(f.slice(2), 10);
+      if (isNaN(step) || step <= 0) return [];
+      const vals: number[] = [];
+      for (let i = min; i <= max; i += step) vals.push(i);
+      return vals;
+    }
+    const val = parseInt(f, 10);
+    if (isNaN(val) || val < min || val > max) return [];
+    return [val];
+  };
+
+  const minutes = parseField(minStr, 0, 59);
+  const hours = parseField(hourStr, 0, 23);
+  const days = parseField(dayStr, 1, 31);
+  const months = parseField(monthStr, 1, 12);
+  const weekdays = parseField(weekdayStr, 0, 6);
+
+  if (
+    !minutes.length ||
+    !hours.length ||
+    !days.length ||
+    !months.length ||
+    !weekdays.length
+  )
+    return null;
+
+  const now = new Date();
+  // Search forward day by day, up to 2 years
+  for (let d = 0; d < 730; d++) {
+    const candidate = new Date(now.getTime() + d * 86400000);
+    // Set to start of the day
+    candidate.setUTCHours(0, 0, 0, 0);
+    const month = candidate.getUTCMonth() + 1; // 1-12
+    const day = candidate.getUTCDate();
+    const weekday = candidate.getUTCDay(); // 0-6
+
+    if (!months.includes(month)) continue;
+    if (!days.includes(day)) continue;
+    if (!weekdays.includes(weekday)) continue;
+
+    for (const h of hours) {
+      for (const m of minutes) {
+        candidate.setUTCHours(h, m, 0, 0);
+        if (candidate.getTime() > now.getTime()) {
+          return candidate;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 export function armAllSchedules(): void {

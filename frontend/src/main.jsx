@@ -323,7 +323,10 @@ function Layout() {
         body: JSON.stringify({ enabled: next }),
       });
       setSandbox(r.sandbox);
-      toast(next ? "已切换至 hoya 沙箱 (② 级)" : "已切换至 vm.createContext (① 级)", "success");
+      toast(
+        next ? "已切换至 hoya 沙箱 (② 级)" : "已切换至 vm.createContext (① 级)",
+        "success",
+      );
     } catch (e) {
       toast("切换沙箱失败: " + e.message, "error");
     }
@@ -886,6 +889,7 @@ function Editor({ app, refresh, toast, initialTab }) {
     },
     { key: "versions", label: "版本管理" },
     { key: "pages", label: "页面配置" },
+    { key: "schedules", label: "定时任务" },
     { key: "docs", label: "调用文档" },
   ];
   return (
@@ -969,6 +973,9 @@ function Editor({ app, refresh, toast, initialTab }) {
       )}
       {tab === "pages" && (
         <PagesPanel app={app} toast={toast} refresh={refresh} />
+      )}
+      {tab === "schedules" && (
+        <SchedulesPanel app={app} version={version} toast={toast} />
       )}
       {tab === "docs" && (
         <DocsPanel
@@ -2610,6 +2617,247 @@ function RunsPanel({ app }) {
     </div>
   );
 }
+
+// ── 定时任务面板 ────────────────────────────────────────────────────────────────
+
+function SchedulesPanel({ app, version, toast }) {
+  const [schedules, setSchedules] = useState(app.schedules || []);
+  const [showForm, setShowForm] = useState(false);
+  const [scheduleType, setScheduleType] = useState("interval");
+  const [intervalMinutes, setIntervalMinutes] = useState(10);
+  const [dailyAt, setDailyAt] = useState("08:00");
+  const [cronExpression, setCronExpression] = useState("*/30 * * * *");
+  const [inputJson, setInputJson] = useState(
+    JSON.stringify(app.sampleInput || {}, null, 2),
+  );
+  const [creating, setCreating] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const data = await api(`/api/apps/${app.id}/schedules`);
+      setSchedules(data);
+    } catch (e) {
+      toast("获取定时任务列表失败: " + e.message, "error");
+    }
+  }, [app.id, toast]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const createSchedule = async (e) => {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      const payload = {
+        versionId: version.id,
+        scheduleType,
+        input: JSON.parse(inputJson),
+      };
+      if (scheduleType === "interval") {
+        payload.intervalSeconds = intervalMinutes * 60;
+      } else if (scheduleType === "daily") {
+        payload.dailyAt = dailyAt;
+      } else if (scheduleType === "cron") {
+        payload.cronExpression = cronExpression;
+      }
+      await api(`/api/apps/${app.id}/schedules`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      toast("定时任务创建成功", "success");
+      setShowForm(false);
+      await refresh();
+    } catch (e) {
+      toast("创建失败: " + e.message, "error");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const disableSchedule = async (schedule) => {
+    try {
+      await api(`/api/schedules/${schedule.id}`, { method: "DELETE" });
+      toast("已停用定时任务", "success");
+      await refresh();
+    } catch (e) {
+      toast("停用失败: " + e.message, "error");
+    }
+  };
+
+  const typeLabel = (s) => {
+    if (s.scheduleType === "interval") return "间隔";
+    if (s.scheduleType === "daily") return "每日";
+    if (s.scheduleType === "cron") return "Cron";
+    return s.scheduleType || "间隔";
+  };
+
+  const typeDesc = (s) => {
+    if (s.scheduleType === "interval")
+      return `每 ${Math.round(s.intervalSeconds / 60)} 分钟`;
+    if (s.scheduleType === "daily") return `每天 ${s.dailyAt}`;
+    if (s.scheduleType === "cron") return s.cronExpression;
+    if (s.intervalSeconds) return `每 ${Math.round(s.intervalSeconds / 60)} 分钟`;
+    return "-";
+  };
+
+  return (
+    <div className="tab-content">
+      <div className="panel-title">
+        <span>定时任务（{schedules.length} 个）</span>
+        <button className="text-btn" onClick={() => setShowForm(!showForm)}>
+          {showForm ? "取消" : "+ 新建"}
+        </button>
+      </div>
+
+      {showForm && (
+        <form className="schedule-form" onSubmit={createSchedule}>
+          <div className="form-row">
+            <label>触发方式</label>
+            <div className="schedule-type-tabs">
+              {[
+                { key: "interval", label: "固定间隔" },
+                { key: "daily", label: "每日定时" },
+                { key: "cron", label: "Cron 表达式" },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={`schedule-type-btn ${scheduleType === t.key ? "active" : ""}`}
+                  onClick={() => setScheduleType(t.key)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {scheduleType === "interval" && (
+            <div className="form-row">
+              <label>执行间隔（分钟）</label>
+              <select
+                value={intervalMinutes}
+                onChange={(e) => setIntervalMinutes(Number(e.target.value))}
+              >
+                {[10, 15, 20, 30, 60, 120, 180, 360, 720, 1440].map((m) => (
+                  <option key={m} value={m}>
+                    {m >= 60 ? `${m / 60} 小时` : `${m} 分钟`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {scheduleType === "daily" && (
+            <div className="form-row">
+              <label>每日执行时间（UTC）</label>
+              <input
+                type="text"
+                value={dailyAt}
+                onChange={(e) => setDailyAt(e.target.value)}
+                placeholder="08:00"
+                pattern="\d{2}:\d{2}"
+                className="schedule-time-input"
+              />
+              <span className="form-hint">格式 HH:mm，如 08:00、18:30</span>
+            </div>
+          )}
+
+          {scheduleType === "cron" && (
+            <div className="form-row">
+              <label>Cron 表达式（5 字段）</label>
+              <input
+                type="text"
+                value={cronExpression}
+                onChange={(e) => setCronExpression(e.target.value)}
+                placeholder="*/30 * * * *"
+                className="schedule-cron-input"
+              />
+              <span className="form-hint">
+                分 时 日 月 周，如 */30 * * * *（每30分钟）
+              </span>
+            </div>
+          )}
+
+          <div className="form-row">
+            <label>输入参数（JSON）</label>
+            <textarea
+              value={inputJson}
+              onChange={(e) => setInputJson(e.target.value)}
+              rows={4}
+              className="schedule-input-json"
+            />
+          </div>
+
+          <div className="form-row">
+            <button type="submit" className="btn" disabled={creating}>
+              {creating ? "创建中…" : "创建定时任务"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {schedules.length === 0 && !showForm ? (
+        <div className="runs-empty">
+          暂无定时任务。点击"+ 新建"创建定时触发规则。
+        </div>
+      ) : (
+        <table className="runs-table">
+          <thead>
+            <tr>
+              <th>触发方式</th>
+              <th>规则</th>
+              <th>状态</th>
+              <th>下次执行</th>
+              <th>上次执行</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {schedules.map((s) => (
+              <tr key={s.id}>
+                <td>
+                  <span className="schedule-type-tag">{typeLabel(s)}</span>
+                </td>
+                <td>
+                  <code>{typeDesc(s)}</code>
+                </td>
+                <td>
+                  <span
+                    className={`run-status ${s.status === "active" ? "succeeded" : "failed"}`}
+                  >
+                    {s.status === "active" ? "运行中" : "已停用"}
+                  </span>
+                </td>
+                <td>
+                  {s.nextRunAt
+                    ? new Date(s.nextRunAt).toLocaleString()
+                    : "-"}
+                </td>
+                <td>
+                  {s.lastRunAt
+                    ? new Date(s.lastRunAt).toLocaleString()
+                    : "从未"}
+                </td>
+                <td>
+                  {s.status === "active" && (
+                    <button
+                      className="text-btn danger"
+                      onClick={() => disableSchedule(s)}
+                    >
+                      停用
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function LogViewer({ runId, data, onClose }) {
   return (
     <div className="log-viewer">
