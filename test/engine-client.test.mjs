@@ -11,6 +11,7 @@ test('Hosta rejects mismatched engine correlation instead of accepting success',
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
   process.env.HOYA_URL=`http://127.0.0.1:${server.address().port}`;process.env.HOYA_AUTH_TOKEN='test';
-  await assert.rejects(()=>executeWithHoya({code:'function main(){return 1;}',runtime:'javascript'},{},'expected'),{code:'ENGINE_PROTOCOL'});
+  await assert.rejects(()=>executeWithHoya({code:'function main(){return 1;}',runtime:'javascript',codeSha256:artifactHash('function main(){return 1;}','javascript')},{},'expected'),{code:'ENGINE_PROTOCOL'});
+  await assert.rejects(()=>executeWithHoya({code:'function main(){return 2;}',runtime:'javascript',codeSha256:'0'.repeat(64)},{},'expected'),{code:'ARTIFACT_HASH_MISMATCH'});
   assert.equal(artifactHash('YQ==','wasm'),artifactHash('a','javascript'));
 });

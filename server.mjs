@@ -44,7 +44,7 @@ function error(res, status, code, message) { json(res, status, { error: { code, 
 async function body(req) {
   if (Object.hasOwn(req, 'parsedBody')) return req.parsedBody;
   const chunks = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > 1_048_576) throw new Error('Request body exceeds 1 MiB'); chunks.push(chunk); }
+  for await (const chunk of req) { size += chunk.length; if (size > 2_097_152) { const error = new Error('Request body exceeds 2 MiB'); error.status = 413; throw error; } chunks.push(chunk); }
   if (!chunks.length) return {};
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { const err = new Error('Body must be valid JSON'); err.status = 400; throw err; }
@@ -72,7 +72,7 @@ function publicApp(app) {
   return { ...app, draftVersion: draft, publishedVersion: published, deployments: store.deployments.filter((d) => d.appId === app.id).map(({ keyHash, ...d }) => d), schedules: store.schedules.filter((s) => s.appId === app.id), modelCalls: store.modelCalls.filter((call) => call.appId === app.id).slice(-10).reverse(), runs: store.runs.filter((r) => r.appId === app.id).slice(-20).reverse() };
 }
 function validateCode(code, runtime = 'javascript') {
-  if (typeof code !== 'string' || code.length === 0 || code.length > 131072) return 'Code must be between 1 and 131072 characters';
+  if (typeof code !== 'string' || code.length === 0 || Buffer.byteLength(code) > (runtime === 'wasm' ? 1398104 : 131072)) return 'Artifact exceeds the supported source/binary size limit';
   if (runtime === 'wasm') {
     const bytes = Buffer.from(code, 'base64');
     return bytes.toString('base64') === code && bytes.subarray(0, 8).equals(Buffer.from([0,97,115,109,1,0,0,0])) ? null : 'Expected canonical base64 WASM bytes; ABI validation occurs in Hoya';
@@ -248,7 +248,7 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
       const app = appById(versionCreateMatch[1]); if (!app) return error(res, 404, 'NOT_FOUND', 'App not found'); const payload = await body(req); const code = String(payload.code || '');
       const runtime = payload.runtime === 'wasm' ? 'wasm' : (app.runtime || 'javascript'); const language = runtime === 'wasm' && payload.language === 'moonbit' ? 'moonbit' : runtime === 'wasm' ? 'rust' : 'javascript';
       const compiled = runtime === 'wasm' && payload.encoding !== 'base64' ? await compileWasm(language, code) : { binary: code, size: runtime === 'wasm' ? Buffer.from(code, 'base64').length : Buffer.byteLength(code) }; const diagnostics = diagnosticsFor(compiled.binary, runtime); const hasError = diagnostics.some((item) => item.severity === 'error');
-      const version = { id: id('ver'), appId: app.id, runtime, language, sourceCode: runtime === 'wasm' ? code : undefined, wasmSize: runtime === 'wasm' ? compiled.size : undefined, number: store.versions.filter((v) => v.appId === app.id).length + 1, status: hasError ? 'needs_revision' : 'ready', source: 'manual-edit', summary: String(payload.summary || '用户编辑的程序版本').slice(0, 500), code: compiled.binary, codeSha256: artifactHash(compiled.binary, runtime), tests: [], validationError: diagnostics.find((item) => item.severity === 'error')?.message || null, diagnostics, createdAt: now() };
+      const version = { id: id('ver'), appId: app.id, runtime, language, sourceCode: runtime === 'wasm' && payload.encoding !== 'base64' ? code : undefined, wasmSize: runtime === 'wasm' ? compiled.size : undefined, number: store.versions.filter((v) => v.appId === app.id).length + 1, status: hasError ? 'needs_revision' : 'ready', source: 'manual-edit', summary: String(payload.summary || '用户编辑的程序版本').slice(0, 500), code: compiled.binary, codeSha256: artifactHash(compiled.binary, runtime), tests: [], validationError: diagnostics.find((item) => item.severity === 'error')?.message || null, diagnostics, createdAt: now() };
       store.versions.push(version); app.draftVersionId = version.id; app.updatedAt = now(); await save(); return json(res, 201, version);
     }
     const generateMatch = url.pathname.match(/^\/api\/apps\/([^/]+)\/generate$/);
