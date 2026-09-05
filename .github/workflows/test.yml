@@ -1,0 +1,32 @@
+name: CLI and engine integration
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/checkout@v4
+        with:
+          repository: worktools/hoya
+          ref: 1abd85225e816bc918e34c49029cccdf306224d5
+          path: .engine-test
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .engine-test
+      - run: cargo build --locked
+        working-directory: .engine-test
+      - run: npm test
+        env:
+          HOYA_BINARY: ${{ github.workspace }}/.engine-test/target/debug/hoya

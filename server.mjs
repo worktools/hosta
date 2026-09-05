@@ -1,17 +1,17 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, mkdtemp, rm, rename } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, extname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import vm from 'node:vm';
+import { artifactHash, engineStatus, executeWithHoya } from './lib/hoya-client.mjs';
 
 const root = resolve(process.cwd());
 const staticDir = join(root, 'dist');
-const dataFile = join(root, 'data', 'hosta.json');
+const dataFile = resolve(process.env.HOSTA_DATA_FILE || join(root, 'data', 'hosta.json'));
 const port = Number(process.env.PORT || 4173);
 const now = () => new Date().toISOString();
-const rustStarter = `#![no_std]\n#![no_main]\n\n#[unsafe(no_mangle)]\npub extern "C" fn main() -> i32 {\n  42\n}\n\n#[panic_handler]\nfn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n`;
+const rustStarter = "#![no_std]\n#![no_main]\n\n#[link(wasm_import_module = \"env\")]\nunsafe extern \"C\" {\n    fn get_input(ptr: *mut u8, capacity: u32) -> u32;\n}\nstatic mut OUTPUT: [u8; 1048577] = [0; 1048577];\n#[unsafe(no_mangle)]\npub extern \"C\" fn hoya_main() -> i32 {\n    unsafe {\n        let ptr = core::ptr::addr_of_mut!(OUTPUT).cast::<u8>();\n        let len = get_input(ptr, 1048576);\n        *ptr.add(len as usize) = 0;\n        ptr as i32\n    }\n}\n#[panic_handler]\nfn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n";
 const moonStarter = `pub fn run() -> Int {\n  42\n}\n`;
 
 async function loadStore() {
@@ -24,11 +24,13 @@ async function loadStore() {
 let store = await loadStore();
 store.schedules ??= [];
 store.modelCalls ??= [];
+store.idempotency ??= [];
 let serial = Promise.resolve();
 function save() {
-  serial = serial.then(async () => {
+  serial = serial.catch(() => {}).then(async () => {
     await mkdir(dirname(dataFile), { recursive: true });
-    await writeFile(dataFile, JSON.stringify(store, null, 2));
+    await writeFile(`${dataFile}.tmp`, JSON.stringify(store, null, 2));
+    await rename(`${dataFile}.tmp`, dataFile);
   });
   return serial;
 }
@@ -40,6 +42,7 @@ function json(res, status, body) {
 }
 function error(res, status, code, message) { json(res, status, { error: { code, message } }); }
 async function body(req) {
+  if (Object.hasOwn(req, 'parsedBody')) return req.parsedBody;
   const chunks = []; let size = 0;
   for await (const chunk of req) { size += chunk.length; if (size > 1_048_576) throw new Error('Request body exceeds 1 MiB'); chunks.push(chunk); }
   if (!chunks.length) return {};
@@ -66,14 +69,15 @@ function scheduleById(scheduleId) { return store.schedules.find((item) => item.i
 function publicApp(app) {
   const draft = app.draftVersionId ? versionById(app.draftVersionId) : null;
   const published = app.publishedVersionId ? versionById(app.publishedVersionId) : null;
-  return { ...app, draftVersion: draft, publishedVersion: published, deployments: store.deployments.filter((d) => d.appId === app.id), schedules: store.schedules.filter((s) => s.appId === app.id), modelCalls: store.modelCalls.filter((call) => call.appId === app.id).slice(-10).reverse(), runs: store.runs.filter((r) => r.appId === app.id).slice(-20).reverse() };
+  return { ...app, draftVersion: draft, publishedVersion: published, deployments: store.deployments.filter((d) => d.appId === app.id).map(({ keyHash, ...d }) => d), schedules: store.schedules.filter((s) => s.appId === app.id), modelCalls: store.modelCalls.filter((call) => call.appId === app.id).slice(-10).reverse(), runs: store.runs.filter((r) => r.appId === app.id).slice(-20).reverse() };
 }
 function validateCode(code, runtime = 'javascript') {
   if (typeof code !== 'string' || code.length === 0 || code.length > 131072) return 'Code must be between 1 and 131072 characters';
   if (runtime === 'wasm') {
-    try { new WebAssembly.Module(Buffer.from(code, 'base64')); return null; } catch { return 'WASM mode expects a valid base64-encoded WebAssembly module'; }
+    const bytes = Buffer.from(code, 'base64');
+    return bytes.toString('base64') === code && bytes.subarray(0, 8).equals(Buffer.from([0,97,115,109,1,0,0,0])) ? null : 'Expected canonical base64 WASM bytes; ABI validation occurs in Hoya';
   }
-  if (!/async\s+function\s+main\s*\(/.test(code)) return 'Code must define async function main(input, ctx)';
+  if (!/(?:async\s+)?function\s+main\s*\(/.test(code)) return 'Code must define function main(input, ctx)';
   if (/\b(require|process|globalThis|import\s*\(|child_process|fs|eval|Function)\b/.test(code)) return 'Code contains a forbidden host capability';
   return null;
 }
@@ -82,8 +86,7 @@ function diagnosticsFor(code, runtime = 'javascript') {
   const policyError = validateCode(code, runtime);
   if (policyError) diagnostics.push({ severity: 'error', code: 'POLICY_REJECTED', message: policyError });
   else {
-    try { new vm.Script(`"use strict"; ${code}`); } catch (err) { diagnostics.push({ severity: 'error', code: 'SYNTAX_ERROR', message: String(err.message) }); }
-    if (runtime === 'wasm') diagnostics.push({ severity: 'info', code: 'WASM_ISOLATION', message: 'WASM 运行于无宿主 import 的最小环境；当前仅调用导出的 main 函数。' });
+    if (runtime === 'wasm') diagnostics.push({ severity: 'info', code: 'WASM_ISOLATION', message: 'WASM 由独立 Hoya 校验并执行 hoya-json-v1 ABI。' });
     else if (!/ctx\.log\s*\(/.test(code)) diagnostics.push({ severity: 'info', code: 'NO_STRUCTURED_LOGS', message: '建议在关键分支调用 ctx.log，便于定位线上输入问题。' });
     if (!/return\s+/.test(code)) diagnostics.push({ severity: 'warning', code: 'NO_EXPLICIT_RETURN', message: '未发现显式 return，Webhook 可能只返回 null。' });
   }
@@ -96,8 +99,6 @@ function sampleCode(description = '') {
   }
   return `async function main(input, ctx) {\n  ctx.log('info', 'Hosta function started');\n  return { ok: true, received: input };\n}`;
 }
-const sampleWasm = 'AGFzbQEAAAABBQFgAAF/AwIBAAcIAQRtYWluAAAKBgEEAEEqCw==';
-function safeJson(value) { JSON.stringify(value); return value; }
 function runCommand(command, args, cwd) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let output = '';
@@ -115,6 +116,7 @@ function runCommand(command, args, cwd) {
   });
 }
 async function compileWasm(language, source) {
+  if (process.env.HOSTA_ENABLE_LOCAL_COMPILER !== '1') { const error = new Error('Upload precompiled WASM with encoding=base64; local source compilation requires HOSTA_ENABLE_LOCAL_COMPILER=1 for trusted sources'); error.status = 400; throw error; }
   const workdir = await mkdtemp(join(tmpdir(), 'hosta-compile-'));
   try {
     let outputFile;
@@ -128,7 +130,7 @@ async function compileWasm(language, source) {
       outputFile = join(workdir, 'module.wasm'); await writeFile(join(workdir, 'main.rs'), source);
       await runCommand('rustc', ['+stable', '--target', 'wasm32-unknown-unknown', '-O', '--crate-type', 'cdylib', 'main.rs', '-o', 'module.wasm'], workdir);
     }
-    const wasm = await readFile(outputFile); new WebAssembly.Module(wasm);
+    const wasm = await readFile(outputFile);
     return { binary: wasm.toString('base64'), size: wasm.length };
   } catch (error) { const wrapped = new Error(`Compilation failed: ${String(error.message).slice(0, 6000)}`); wrapped.status = 400; throw wrapped; }
   finally { await rm(workdir, { recursive: true, force: true }); }
@@ -155,22 +157,11 @@ async function execute(version, input, trigger) {
   store.runs.push(run); await save();
   const start = performance.now();
   try {
-    const runtime = version.runtime || 'javascript'; const policyError = validateCode(version.code, runtime); if (policyError) { run.status = 'rejected'; run.error = { code: 'POLICY_REJECTED', message: policyError }; return run; }
-    const logs = [];
-    if (runtime === 'wasm') {
-      const module = await WebAssembly.instantiate(Buffer.from(version.code, 'base64'), {}); const fn = module.instance.exports.main;
-      if (typeof fn !== 'function') throw new Error('WASM module must export a main function'); run.status = 'succeeded'; run.result = { value: fn(), runtime: 'wasm' }; run.logs = logs; return run;
-    }
-    const context = vm.createContext({ JSON, Math, Number, String, Boolean, Array, Object, Date, Promise, setTimeout: undefined, console: undefined });
-    vm.runInContext(`"use strict"; ${version.code}; globalThis.__hostaMain = main;`, context, { timeout: 1000 });
-    const fn = context.__hostaMain;
-    const ctx = { log(level, message, fields) { if (logs.length < 100) logs.push({ level: ['debug','info','warn','error'].includes(level) ? level : 'info', message: String(message).slice(0, 2000), fields: fields ?? null, at: now() }); }, now: () => Date.now() };
-    const result = await Promise.race([Promise.resolve(fn(input, ctx)), new Promise((_, reject) => setTimeout(() => reject(new Error('Execution exceeded 3000 ms')), 3000))]);
-    const encoded = JSON.stringify(result); if (encoded.length > 1_048_576) throw new Error('Result exceeds 1 MiB');
-    run.status = 'succeeded'; run.result = safeJson(result); run.logs = logs;
+    const value = await executeWithHoya(version, input, run.id);
+    Object.assign(run, { status: value.status, result: value.result, logs: value.logs, error: value.error, metrics: value.metrics, artifactSha256: value.artifactSha256, protocolVersion: value.protocolVersion });
   } catch (err) {
-    run.status = /exceeded 3000/.test(String(err.message)) ? 'timed_out' : 'failed';
-    run.error = { code: run.status === 'timed_out' ? 'EXECUTION_TIMEOUT' : 'USER_CODE_ERROR', message: String(err.message).slice(0, 2000) };
+    run.status = 'internal_error';
+    run.error = { code: err.code || 'PLATFORM_ERROR', message: err.message, retryable: Boolean(err.retryable) };
   } finally { run.finishedAt = now(); run.durationMs = Math.round(performance.now() - start); await save(); }
   return run;
 }
@@ -195,8 +186,9 @@ async function staticFile(res, pathname) {
   if (!file.startsWith(`${staticDir}/`) && file !== join(staticDir, 'index.html')) return false;
   try { const data = await readFile(file); res.writeHead(200, { 'content-type': contentType(file) }); res.end(data); return true; } catch { return false; }
 }
-const server = createServer(async (req, res) => {
+async function dispatch(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.pathname.startsWith('/api/') && process.env.HOSTA_API_TOKEN && req.headers.authorization !== `Bearer ${process.env.HOSTA_API_TOKEN}`) return error(res, 401, 'UNAUTHORIZED', 'A valid management API token is required');
   try {
     if (req.method === 'GET' && url.pathname === '/llms.txt') {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
@@ -211,7 +203,11 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 
 ## Create and run
 - POST /api/apps body: {name, description, sampleInput, runtime: "javascript" | "wasm", language?: "rust" | "moonbit"}.
-- POST /api/apps/:id/generate creates a source version and compiles WASM programs.
+- POST /api/apps/:id/versions accepts {code,runtime,encoding?: "base64"}; WASM uses precompiled bytes, JS uses UTF-8 source.
+- GET /api/status reports actual Hoya readiness; GET /api/apps/:id/versions lists immutable versions.
+- GET /api/runs supports appId/versionId/status/trigger filters and offset/limit.
+- CLI: node bin/hosta.mjs --help provides non-interactive commands and JSON output.
+- POST /api/apps/:id/generate is optional; no AI is required for version upload.
 - POST /api/versions/:id/run body: JSON input.
 - POST /api/versions/:id/diagnose body: JSON input.
 
@@ -222,12 +218,24 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 
 ## Runtime contracts
 - javascript: define async function main(input, ctx).
-- wasm/rust: submit Rust source defining #[unsafe(no_mangle)] pub extern "C" fn main() -> i32. Hosta compiles with rustc --target wasm32-unknown-unknown.
-- wasm/moonbit: submit MoonBit source defining pub fn run() -> Int. Hosta compiles with moon build --target wasm.
-- The compiled WASM binary is stored server-side; agents must submit source, not base64 modules.
+- wasm: upload canonical base64 bytes with encoding=base64, exporting memory and hoya_main() -> i32 (pointer to NUL-terminated JSON).
+- MoonBit ABI support is not yet verified.
+- Hoya executes immutable artifacts; artifact hashes cover decoded WASM bytes or UTF-8 JS source.
 `);
     }
     if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { status: 'healthy', service: 'hosta', generator: process.env.DEEPSEEK_API_KEY ? 'deepseek' : 'local-demo' });
+    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, { service: 'hosta', engine: await engineStatus(), generator: process.env.DEEPSEEK_API_KEY ? 'deepseek' : 'local-demo', localCompilerEnabled: process.env.HOSTA_ENABLE_LOCAL_COMPILER === '1' });
+    const versionsList = url.pathname.match(/^\/api\/apps\/([^/]+)\/versions$/);
+    if (req.method === 'GET' && versionsList) {
+      if (!appById(versionsList[1])) return error(res, 404, 'NOT_FOUND', 'App not found');
+      return json(res, 200, store.versions.filter(v => v.appId === versionsList[1]));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/runs') {
+      const offset = Number(url.searchParams.get('offset') || 0), limit = Number(url.searchParams.get('limit') || 20);
+      if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) return error(res, 400, 'VALIDATION_ERROR', 'Invalid pagination');
+      const items = store.runs.filter(r => ['appId','versionId','status','trigger'].every(k => !url.searchParams.has(k) || r[k] === url.searchParams.get(k))).slice().reverse();
+      return json(res, 200, { items: items.slice(offset, offset + limit), nextOffset: offset + limit < items.length ? offset + limit : null });
+    }
     if (req.method === 'GET' && url.pathname === '/api/apps') return json(res, 200, store.apps.map(publicApp));
     if (req.method === 'POST' && url.pathname === '/api/apps') {
       const input = await body(req); if (!String(input.name || '').trim() || !String(input.description || '').trim()) return error(res, 400, 'VALIDATION_ERROR', 'Name and description are required');
@@ -239,8 +247,8 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
     if (req.method === 'POST' && versionCreateMatch) {
       const app = appById(versionCreateMatch[1]); if (!app) return error(res, 404, 'NOT_FOUND', 'App not found'); const payload = await body(req); const code = String(payload.code || '');
       const runtime = payload.runtime === 'wasm' ? 'wasm' : (app.runtime || 'javascript'); const language = runtime === 'wasm' && payload.language === 'moonbit' ? 'moonbit' : runtime === 'wasm' ? 'rust' : 'javascript';
-      const compiled = runtime === 'wasm' ? await compileWasm(language, code) : { binary: code, size: Buffer.byteLength(code) }; const diagnostics = diagnosticsFor(compiled.binary, runtime); const hasError = diagnostics.some((item) => item.severity === 'error');
-      const version = { id: id('ver'), appId: app.id, runtime, language, sourceCode: runtime === 'wasm' ? code : undefined, wasmSize: runtime === 'wasm' ? compiled.size : undefined, number: store.versions.filter((v) => v.appId === app.id).length + 1, status: hasError ? 'needs_revision' : 'ready', source: 'manual-edit', summary: String(payload.summary || '用户编辑的程序版本').slice(0, 500), code: compiled.binary, codeSha256: sha(compiled.binary), tests: [], validationError: diagnostics.find((item) => item.severity === 'error')?.message || null, diagnostics, createdAt: now() };
+      const compiled = runtime === 'wasm' && payload.encoding !== 'base64' ? await compileWasm(language, code) : { binary: code, size: runtime === 'wasm' ? Buffer.from(code, 'base64').length : Buffer.byteLength(code) }; const diagnostics = diagnosticsFor(compiled.binary, runtime); const hasError = diagnostics.some((item) => item.severity === 'error');
+      const version = { id: id('ver'), appId: app.id, runtime, language, sourceCode: runtime === 'wasm' ? code : undefined, wasmSize: runtime === 'wasm' ? compiled.size : undefined, number: store.versions.filter((v) => v.appId === app.id).length + 1, status: hasError ? 'needs_revision' : 'ready', source: 'manual-edit', summary: String(payload.summary || '用户编辑的程序版本').slice(0, 500), code: compiled.binary, codeSha256: artifactHash(compiled.binary, runtime), tests: [], validationError: diagnostics.find((item) => item.severity === 'error')?.message || null, diagnostics, createdAt: now() };
       store.versions.push(version); app.draftVersionId = version.id; app.updatedAt = now(); await save(); return json(res, 201, version);
     }
     const generateMatch = url.pathname.match(/^\/api\/apps\/([^/]+)\/generate$/);
@@ -248,7 +256,7 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
       const app = appById(generateMatch[1]); if (!app) return error(res, 404, 'NOT_FOUND', 'App not found');
       const runtime = app.runtime || 'javascript'; const language = app.language || 'javascript'; const generated = await deepSeekGenerate({ description: app.description, sampleInput: app.sampleInput, runtime });
       const sourceCode = runtime === 'wasm' ? (language === 'moonbit' ? moonStarter : rustStarter) : generated.code; const compiled = runtime === 'wasm' ? await compileWasm(language, sourceCode) : { binary: generated.code, size: Buffer.byteLength(generated.code) }; const problem = validateCode(compiled.binary, runtime);
-      const version = { id: id('ver'), appId: app.id, runtime, language, sourceCode: runtime === 'wasm' ? sourceCode : undefined, wasmSize: runtime === 'wasm' ? compiled.size : undefined, number: store.versions.filter((v) => v.appId === app.id).length + 1, status: problem ? 'needs_revision' : 'ready', source: generated.source, summary: generated.summary, code: compiled.binary, codeSha256: sha(compiled.binary), tests: generated.tests, validationError: problem || null, createdAt: now() };
+      const version = { id: id('ver'), appId: app.id, runtime, language, sourceCode: runtime === 'wasm' ? sourceCode : undefined, wasmSize: runtime === 'wasm' ? compiled.size : undefined, number: store.versions.filter((v) => v.appId === app.id).length + 1, status: problem ? 'needs_revision' : 'ready', source: generated.source, summary: generated.summary, code: compiled.binary, codeSha256: artifactHash(compiled.binary, runtime), tests: generated.tests, validationError: problem || null, createdAt: now() };
       store.versions.push(version); app.draftVersionId = version.id; app.updatedAt = now(); await save();
       store.modelCalls.push({ id: id('model'), appId: app.id, versionId: version.id, provider: generated.source, model: generated.model, usage: generated.usage, estimatedCost: null, createdAt: now() }); await save();
       if (!problem) { for (const test of generated.tests) await execute(version, test.input ?? {}, 'generated_test'); }
@@ -265,12 +273,12 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
     }
     const publishMatch = url.pathname.match(/^\/api\/apps\/([^/]+)\/publish$/);
     if (req.method === 'POST' && publishMatch) {
-      const app = appById(publishMatch[1]); if (!app) return error(res, 404, 'NOT_FOUND', 'App not found'); const payload = await body(req); const version = versionById(payload.versionId || app.draftVersionId);
+      const app = appById(publishMatch[1]); if (!app) return error(res, 404, 'NOT_FOUND', 'App not found'); const payload = await body(req); const version = versionById(payload.versionId);
       if (!version || version.appId !== app.id || version.status !== 'ready') return error(res, 400, 'NOT_PUBLISHABLE', 'A ready version is required');
-      if (!store.runs.some((run) => run.versionId === version.id && run.trigger === 'manual' && run.status === 'succeeded')) return error(res, 400, 'TRIAL_REQUIRED', 'Run this version successfully from the page before publishing');
-      let deployment = store.deployments.find((d) => d.appId === app.id); const webhookKey = randomBytes(24).toString('base64url');
+      if (!store.runs.some((run) => run.versionId === version.id && run.trigger === 'manual' && run.status === 'succeeded')) return error(res, 400, 'TRIAL_REQUIRED', 'Run this exact version successfully via CLI/API before publishing');
+      let deployment = store.deployments.find((d) => d.appId === app.id); const webhookKey = deployment ? undefined : randomBytes(24).toString('base64url');
       if (!deployment) { deployment = { id: id('dep'), appId: app.id, createdAt: now() }; store.deployments.push(deployment); }
-      Object.assign(deployment, { versionId: version.id, status: 'active', keyHash: sha(webhookKey), updatedAt: now() }); app.publishedVersionId = version.id; app.updatedAt = now(); await save();
+      Object.assign(deployment, { versionId: version.id, status: 'active', ...(webhookKey ? { keyHash: sha(webhookKey) } : {}), updatedAt: now() }); app.publishedVersionId = version.id; app.updatedAt = now(); await save();
       return json(res, 200, { deployment: { ...deployment, keyHash: undefined }, webhookKey, webhookUrl: `/hooks/${deployment.id}` });
     }
     const scheduleMatch = url.pathname.match(/^\/api\/apps\/([^/]+)\/schedules$/);
@@ -307,5 +315,43 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
     if (req.method === 'GET' && await staticFile(res, url.pathname)) return;
     error(res, 404, 'NOT_FOUND', 'Route not found');
   } catch (err) { console.error(err); error(res, err.status || 500, 'INTERNAL_ERROR', err.message || 'Unexpected error'); }
+ }
+// A key with an uncertain outcome is never replayed as a fresh write after restart.
+// Completed records are retained for 24h; at capacity reject new keys rather than evict live records.
+const inFlight = new Map();
+const server = createServer(async (req, res) => {
+  const key = req.headers['idempotency-key'];
+  if (!key) return dispatch(req, res);
+  try {
+    if (process.env.HOSTA_API_TOKEN && req.headers.authorization !== `Bearer ${process.env.HOSTA_API_TOKEN}`) return error(res, 401, 'UNAUTHORIZED', 'A valid management API token is required');
+    const path = new URL(req.url, 'http://localhost').pathname;
+    if (req.method !== 'POST' || !/^\/api\/apps(?:\/[^/]+\/versions)?$/.test(path)) return error(res, 400, 'IDEMPOTENCY_UNSUPPORTED', 'Keys are supported only for app/version creation');
+    if (typeof key !== 'string' || key.length < 1 || key.length > 128) return error(res, 400, 'INVALID_KEY', 'Idempotency key must be 1..128 characters');
+    req.parsedBody = await body(req);
+    const fingerprint = sha(JSON.stringify({ path, body: req.parsedBody }));
+    store.idempotency = store.idempotency.filter(r => r.state === 'pending' || Date.now() - r.createdAt < 86400000);
+    const existing = store.idempotency.find(r => r.key === key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) return error(res, 409, 'IDEMPOTENCY_CONFLICT', 'Key was used for a different request');
+      if (inFlight.has(key)) await inFlight.get(key);
+      if (existing.state !== 'completed') return error(res, 409, 'OUTCOME_UNKNOWN', 'Query app/version state before choosing a new key');
+      return json(res, existing.httpStatus, existing.response);
+    }
+    if (store.idempotency.length >= 1000) return error(res, 503, 'IDEMPOTENCY_CAPACITY', 'Idempotency record capacity reached');
+    const record = { key, fingerprint, state: 'pending', createdAt: Date.now() };
+    store.idempotency.push(record);
+    let release; const pending = new Promise(resolve => { release = resolve; }); inFlight.set(key, pending);
+    try {
+      await save();
+      const result = await new Promise((resolveResult, rejectResult) => {
+        let httpStatus = 200;
+        const capture = { writeHead(status) { httpStatus = status; }, end(bytes) { resolveResult({ httpStatus, response: JSON.parse(bytes) }); } };
+        dispatch(req, capture).catch(rejectResult);
+      });
+      Object.assign(record, result, { state: 'completed' }); await save();
+      return json(res, result.httpStatus, result.response);
+    } finally { inFlight.delete(key); release(); }
+  } catch { return error(res, 500, 'PLATFORM_ERROR', 'Cannot persist idempotent operation; query state before retrying'); }
 });
-server.listen(port, '127.0.0.1', () => { armAllSchedules(); console.log(`Hosta listening on http://127.0.0.1:${port}`); });
+
+server.listen(port, '127.0.0.1', () => { armAllSchedules(); console.log(`Hosta listening on http://127.0.0.1:${server.address().port}`); });

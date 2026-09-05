@@ -1,34 +1,47 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
-const api = async (path, options = {}) => { const res = await fetch(path, { headers: { 'content-type': 'application/json', ...options.headers }, ...options }); const value = await res.json(); if (!res.ok) throw new Error(value.error?.message || 'Request failed'); return value; };
-const emptyJs = `async function main(input, ctx) {\n  ctx.log('info', 'started');\n  return { ok: true, received: input };\n}`;
-const rustStarter = `#![no_std]\n#![no_main]\n\n#[unsafe(no_mangle)]\npub extern "C" fn main() -> i32 {\n  42\n}\n\n#[panic_handler]\nfn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n`;
-const moonStarter = `pub fn run() -> Int {\n  42\n}\n`;
-const copy = (value) => navigator.clipboard.writeText(value);
-
+async function api(path) {
+  const response = await fetch(path);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || '读取失败');
+  return data;
+}
 function App() {
-  const [apps, setApps] = useState([]); const [selectedId, setSelectedId] = useState(null); const [view, setView] = useState('apps'); const [notice, setNotice] = useState('');
-  const [draft, setDraft] = useState({ name: '', description: '', runtime: 'javascript', language: 'rust', sample: '{\n  "value": 1\n}' });
-  const selected = useMemo(() => apps.find((app) => app.id === selectedId) || apps[0], [apps, selectedId]);
-  const refresh = async () => { const data = await api('/api/apps'); setApps(data); setSelectedId((id) => id || data[0]?.id || null); };
-  useEffect(() => { refresh().catch((e) => setNotice(e.message)); }, []);
-  const create = async (event) => { event.preventDefault(); try { const sampleInput = JSON.parse(draft.sample); const app = await api('/api/apps', { method: 'POST', body: JSON.stringify({ name: draft.name, description: draft.description, sampleInput, runtime: draft.runtime, language: draft.language }) }); await api(`/api/apps/${app.id}/generate`, { method: 'POST', body: '{}' }); setNotice('程序已生成并完成编译。'); await refresh(); setSelectedId(app.id); setView('editor'); } catch (e) { setNotice(e.message); } };
-  return <div className="shell"><aside><div className="brand"><span className="mark">H</span><span>hosta</span></div><nav><button className={view === 'apps' ? 'active' : ''} onClick={() => setView('apps')}>程序</button><button className={view === 'new' ? 'active' : ''} onClick={() => setView('new')}>新建程序</button><a href="/llms.txt" target="_blank">LLM Agent 指南 ↗</a></nav><div className="side-label">最近程序</div><div className="app-nav">{apps.map((app) => <button key={app.id} className={selected?.id === app.id ? 'selected' : ''} onClick={() => { setSelectedId(app.id); setView('editor'); }}><span className="dot"></span>{app.name}</button>)}</div><div className="sidebar-bottom">Local workspace<br/>DeepSeek ready</div></aside><main><header><div><span className="crumb">Workspace / {view === 'editor' ? selected?.name || 'Program' : view === 'new' ? 'New program' : 'Programs'}</span><h1>{view === 'apps' ? '程序' : view === 'new' ? '创建程序' : selected?.name}</h1></div><div className="header-actions"><span className="runtime">{selected?.runtime || 'javascript'}</span><button className="ghost" onClick={() => refresh()}>刷新</button></div></header>{notice && <div className="notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}{view === 'apps' && <AppList apps={apps} open={(id) => { setSelectedId(id); setView('editor'); }} create={() => setView('new')} />}{view === 'new' && <Create draft={draft} setDraft={setDraft} create={create} />}{view === 'editor' && selected && <Editor app={selected} refresh={refresh} notice={setNotice} />}</main></div>;
+  const [apps, setApps] = useState([]);
+  const [status, setStatus] = useState(null);
+  const [selectedId, select] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const refresh = async () => {
+    setLoading(true);
+    try { const [items, state] = await Promise.all([api('/api/apps'), api('/api/status')]); setApps(items); setStatus(state); setError(''); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { refresh(); }, []);
+  const selected = apps.find(a => a.id === selectedId) || apps[0];
+  return <div className="shell"><aside>
+    <div className="brand"><span className="mark">H</span>hosta</div>
+    <p>工作区状态</p>
+    <div className="app-nav">{apps.map(a => <button key={a.id} className={selected?.id === a.id ? 'selected' : ''} onClick={() => select(a.id)}>{a.name}</button>)}</div>
+    <a href="/llms.txt">CLI / API 指南 ↗</a>
+    <div className="sidebar-bottom">{status?.engine?.status === 'ready' ? 'Hoya v1 已就绪' : 'Hoya 未就绪'}<br/>{status?.generator || '模型状态未知'}</div>
+  </aside><main>
+    <header><div><span className="crumb">CLI workspace / 只读展示</span><h1>{selected?.name || '程序与运行状态'}</h1></div><button disabled={loading} onClick={refresh}>{loading ? '读取中…' : '刷新'}</button></header>
+    {error && <div className="notice" role="alert">{error}。配置了管理凭据时，请使用 CLI 查询。</div>}
+    <section className="page">
+      <p className="lead">创建、上传版本、试运行和发布通过 CLI 完成：<code>node bin/hosta.mjs --help</code></p>
+      {status?.engine?.error && <p role="status">{status.engine.error.code}：{status.engine.error.message}</p>}
+      {!selected ? <div className="empty">暂无程序。使用 <code>hosta apps create --name example</code> 创建。</div> : <>
+        <div className="info-grid"><div className="info"><h3>应用</h3><p>{selected.description}</p><code>{selected.id}</code><p>{selected.runtime}</p><code>POST /invoke/{selected.code}</code></div>
+        <div className="info"><h3>草稿与线上版本</h3><p>草稿：{selected.draftVersion?.id || '无'} · {selected.draftVersion?.status || '未上传'}</p><p>线上：{selected.publishedVersion?.id || '未发布'}</p><p>产物 SHA-256</p><code style={{overflowWrap:'anywhere'}}>{selected.draftVersion?.codeSha256 || '无'}</code></div></div>
+        <h2>最近运行</h2>
+        {!selected.runs?.length && <p>暂无运行。使用 CLI 指定版本试运行。</p>}
+        {selected.runs?.map(run => <details className="info" key={run.id}><summary>{run.status} · {run.trigger} · {run.durationMs ?? '—'}ms · {run.id}</summary><p>版本：{run.versionId}</p><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify({input:run.input,result:run.result,logs:run.logs,error:run.error,artifactSha256:run.artifactSha256},null,2)}</pre></details>)}
+      </>}
+    </section>
+  </main></div>;
 }
-function AppList({ apps, open, create }) { return <section className="page"><div className="toolbar"><p>管理、运行和发布你的自动化程序。</p><button onClick={create}>+ 创建程序</button></div><div className="cards">{apps.map((app) => <button className="card" key={app.id} onClick={() => open(app.id)}><div className="card-top"><span className="runtime">{app.runtime || 'javascript'}</span><span className={app.publishedVersionId ? 'live' : 'draft'}>{app.publishedVersionId ? 'LIVE' : 'DRAFT'}</span></div><h2>{app.name}</h2><p>{app.description}</p><footer><code>{app.code || app.id}</code><span>{app.runs?.length || 0} runs</span></footer></button>)}{!apps.length && <div className="empty">还没有程序。<button onClick={create}>创建第一个</button></div>}</div></section>; }
-function Create({ draft, setDraft, create }) { return <section className="page form-page"><p className="lead">描述你的自动化目标，Hosta 会生成可编辑、可测试的程序版本。</p><form onSubmit={create}><label>程序名称<input required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="例如：订单汇总"/></label><label>运行时<div className="segmented"><button type="button" className={draft.runtime === 'javascript' ? 'chosen' : ''} onClick={() => setDraft({ ...draft, runtime: 'javascript' })}>JavaScript <small>适合 JSON、API 逻辑</small></button><button type="button" className={draft.runtime === 'wasm' ? 'chosen' : ''} onClick={() => setDraft({ ...draft, runtime: 'wasm' })}>WebAssembly <small>通过系统编译 Rust 或 MoonBit</small></button></div></label>{draft.runtime === 'wasm' && <label>WASM 源语言<div className="segmented"><button type="button" className={draft.language === 'rust' ? 'chosen' : ''} onClick={() => setDraft({ ...draft, language: 'rust' })}>Rust <small>wasm32-unknown-unknown</small></button><button type="button" className={draft.language === 'moonbit' ? 'chosen' : ''} onClick={() => setDraft({ ...draft, language: 'moonbit' })}>MoonBit <small>moon build --target wasm</small></button></div></label>}<label>需求<textarea required value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="输入 items 数组，返回总金额。"/></label><label>示例输入<textarea className="code" value={draft.sample} onChange={(e) => setDraft({ ...draft, sample: e.target.value })}/></label><button className="primary">生成程序</button></form></section>; }
-function Editor({ app, refresh, notice }) {
-  const version = app.draftVersion; const runtime = version?.runtime || app.runtime || 'javascript'; const language = version?.language || app.language || 'javascript';
-  const [code, setCode] = useState(runtime === 'wasm' ? version?.sourceCode || '' : version?.code || ''); const [input, setInput] = useState(JSON.stringify(app.sampleInput || {}, null, 2)); const [result, setResult] = useState(''); const [deployment, setDeployment] = useState(null);
-  useEffect(() => { setCode(runtime === 'wasm' ? version?.sourceCode || '' : version?.code || ''); setInput(JSON.stringify(app.sampleInput || {}, null, 2)); setResult(''); }, [app.id, version?.id]);
-  const run = async (route) => { try { const value = await api(route, { method: 'POST', body: input }); setResult(JSON.stringify(value, null, 2)); } catch (e) { setResult(`Error: ${e.message}`); } };
-  const save = async () => { try { const v = await api(`/api/apps/${app.id}/versions`, { method: 'POST', body: JSON.stringify({ code, runtime, language }) }); notice(runtime === 'wasm' ? `Rust/MoonBit 已编译，保存为 v${v.number}` : `已保存 v${v.number}`); await refresh(); } catch (e) { notice(e.message); } };
-  const publish = async () => { try { const r = await api(`/api/apps/${app.id}/publish`, { method: 'POST', body: JSON.stringify({ versionId: version.id }) }); setDeployment(r); notice('已发布。请立即保存此访问密钥。'); await refresh(); } catch (e) { notice(e.message); } };
-  const remove = async () => { if (!confirm(`删除“${app.name}”及其所有版本、运行记录和部署？`)) return; try { await api(`/api/apps/${app.id}`, { method: 'DELETE' }); notice(`已删除 ${app.name}`); await refresh(); } catch (e) { notice(e.message); } };
-  const fileName = runtime === 'wasm' ? (language === 'moonbit' ? 'main.mbt' : 'main.rs') : 'index.js';
-  return <section className="editor-page"><div className="editor-head"><div><span className="status-ready">{version?.status || 'draft'}</span><span>v{version?.number || 0} · {runtime}{runtime === 'wasm' ? ` / ${language}` : ''}</span></div><div><button className="danger" onClick={remove}>删除程序</button><button className="ghost" onClick={() => run(`/api/versions/${version.id}/diagnose`)}>诊断</button><button className="ghost" onClick={save}>编译并保存</button><button onClick={publish}>发布</button></div></div><div className="editor-grid"><div className="panel code-panel"><div className="panel-title"><span>{fileName}</span><span>{runtime === 'wasm' ? `系统 ${language === 'moonbit' ? 'moon build --target wasm' : 'rustc --target wasm32-unknown-unknown'}` : '编辑器'}</span></div><textarea className="code-editor" value={code} onChange={(e) => setCode(e.target.value)} spellCheck="false" placeholder={runtime === 'wasm' ? (language === 'moonbit' ? moonStarter : rustStarter) : emptyJs}/></div><div className="panel runner"><div className="panel-title"><span>请求</span><button className="text-btn" onClick={() => run(`/api/versions/${version.id}/run`)}>运行 ▶</button></div><textarea className="code-input" value={input} onChange={(e) => setInput(e.target.value)} spellCheck="false"/><div className="panel-title"><span>结果与诊断</span></div><pre>{result || (runtime === 'wasm' ? '保存时会编译源码；运行使用保存的 WASM 二进制。' : '运行程序或选择诊断以查看结果。')}</pre></div></div><section className="info-grid"><div className="info"><h3>调用地址</h3><code>POST /invoke/{app.code || 'app-code'}</code><p>稳定编码：{app.code}</p></div><div className="info"><h3>最近运行</h3><p>{app.runs?.[0] ? `${app.runs[0].status} · ${app.runs[0].trigger} · ${app.runs[0].durationMs}ms` : '暂无运行记录'}</p></div></section>{deployment && <section className="deployment"><h3>发布成功</h3><p>Webhook: <code>{location.origin}/invoke/{app.code}</code></p><p>Bearer key（仅显示一次）</p><code className="secret">{deployment.webhookKey}</code><button className="ghost" onClick={() => copy(deployment.webhookKey)}>复制</button></section>}</section>;
-}
-
 createRoot(document.getElementById('root')).render(<App />);

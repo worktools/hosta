@@ -8,7 +8,8 @@
     "start": "node --env-file-if-exists=.env server.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:smoke": "node --test test/engine-smoke.test.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -20,5 +21,8 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.5",
     "vite": "^8.2.0"
+  },
+  "bin": {
+    "hosta": "bin/hosta.mjs"
   }
 }
