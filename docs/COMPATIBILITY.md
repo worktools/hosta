@@ -4,7 +4,7 @@ This Hosta branch requires Hoya execution protocol `1`, WASM ABI `hoya-json-v1`
 and JavaScript script-style `main(input, ctx)`.
 
 The real-engine CI fixture pins Hoya revision
-`1abd85225e816bc918e34c49029cccdf306224d5` (the engine-v1 PR). This is an immutable
+`75dd1f7c31a7ef3ced0a068bbde42f1f290d942e` (the engine-v1 PR). This is an immutable
 integration fixture, not a released engine version. Upgrade the pin only after
 the CLI-to-real-engine tests pass; release tags and a supported release matrix
 will follow the engine release issue.

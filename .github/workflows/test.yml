@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: worktools/hoya
-          ref: 1abd85225e816bc918e34c49029cccdf306224d5
+          ref: 75dd1f7c31a7ef3ced0a068bbde42f1f290d942e
           path: .engine-test
       - uses: dtolnay/rust-toolchain@stable
         with:

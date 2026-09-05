@@ -5,9 +5,11 @@
   "description": "A local AI software factory MVP",
   "type": "module",
   "scripts": {
-    "start": "node --env-file-if-exists=.env server.mjs",
+    "start": "node --env-file-if-exists=.env dist/index.js",
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build",
+    "build": "vite build && tsc",
+    "typecheck": "tsc --noEmit",
+    "build:ts": "tsc",
     "test": "node --test test/*.test.mjs",
     "test:smoke": "node --test test/engine-smoke.test.mjs"
   },
@@ -15,11 +17,23 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@json-render/core": "^0.19.0",
+    "@json-render/react": "^0.19.0",
+    "@vanilla-extract/css": "^1.21.2",
+    "@vanilla-extract/recipes": "^0.5.7",
+    "@vanilla-extract/vite-plugin": "^5.2.6",
+    "echarts": "^6.1.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "@vitejs/plugin-react": "^6.0.5",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
     "vite": "^8.2.0"
   },
   "bin": {

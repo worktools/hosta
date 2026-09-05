@@ -17,7 +17,7 @@ export async function startProcess(command,args,env={}) {
 }
 export async function hosta(engineUrl,extra={}) {
   const dir=await mkdtemp(join(tmpdir(),'hosta-test-'));
-  const process=await startProcess(globalThis.process.execPath,['server.mjs'],{PORT:'0',HOSTA_DATA_FILE:join(dir,'hosta.json'),DEEPSEEK_API_KEY:'',HOYA_URL:engineUrl,HOYA_AUTH_TOKEN:'test-engine',HOSTA_API_TOKEN:'test-management',HOSTA_ENABLE_LOCAL_COMPILER:'',...extra});
+  const process=await startProcess(globalThis.process.execPath,['dist/index.js'],{PORT:'0',HOSTA_DATA_FILE:join(dir,'hosta.json'),DEEPSEEK_API_KEY:'',HOYA_URL:engineUrl,HOYA_AUTH_TOKEN:'test-engine',HOSTA_API_TOKEN:'test-management',HOSTA_ENABLE_LOCAL_COMPILER:'',...extra});
   return {...process,dir,async close(){await process.stop();await rm(dir,{recursive:true,force:true});}};
 }
 export async function cli(url,args,input='',extra={}) {

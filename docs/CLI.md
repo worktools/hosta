@@ -49,7 +49,8 @@ node bin/hosta.mjs runs logs --run RUN_ID --json
 Publication requires successful explicit execution of the exact version ID.
 There is no implicit latest-version publish. Re-publishing updates the version
 without rotating the key; only first publication returns the key. Rotation,
-rollback and disable commands are still tracked in issue #5.
+rollback and disable API routes from the TypeScript main branch are retained;
+exposing these operations in the CLI remains tracked in issue #5.
 
 For WASM, compile the no-dependency example locally and upload its binary:
 
@@ -119,3 +120,15 @@ that a JS infinite loop times out, later runs work, and an engine outage does
 not prevent querying Hosta's applications. No browser, model key or production
 data is used. Real smoke requires Rust stable + wasm32-unknown-unknown and the
 Hoya v1 binary; a skipped smoke is not a passing real-engine verification.
+
+Upload status `ready` means the artifact passed static checks, not that it has
+executed successfully. JavaScript diagnostics explicitly report
+`ENGINE_VALIDATION_REQUIRED`; syntax validation runs in QuickJS. Publication
+requires a successful manual run of that exact version, including versions
+selected through rollback or the legacy default-version route.
+
+The default UI is a read-only status view. The previous interactive workspace
+is retained as `frontend/src/legacy-workspace.jsx` for later evaluation and is
+not imported by the default build. Existing TypeScript management routes and
+data structures are retained. Datasource access, migrations and page processing
+execute through Hoya v1; legacy network/inter-app guest APIs are unavailable.
