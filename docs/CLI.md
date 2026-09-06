@@ -48,9 +48,7 @@ node bin/hosta.mjs runs logs --run RUN_ID --json
 
 Publication requires successful explicit execution of the exact version ID.
 There is no implicit latest-version publish. Re-publishing updates the version
-without rotating the key; only first publication returns the key. Rotation,
-rollback and disable API routes from the TypeScript main branch are retained;
-exposing these operations in the CLI remains tracked in issue #5.
+without rotating the key; only first publication returns the key. Deployment controls are documented below.
 
 For WASM, compile the no-dependency example locally and upload its binary:
 
@@ -132,3 +130,27 @@ is retained as `frontend/src/legacy-workspace.jsx` for later evaluation and is
 not imported by the default build. Existing TypeScript management routes and
 data structures are retained. Datasource access, migrations and page processing
 execute through Hoya v1; legacy network/inter-app guest APIs are unavailable.
+
+## Deployment controls
+
+```sh
+hosta deployments get --app APP_ID
+hosta deployments rollback --deployment DEPLOYMENT_ID --version VERIFIED_VERSION_ID
+hosta deployments disable --deployment DEPLOYMENT_ID
+# Restore with an explicit successfully tested version; existing key is retained.
+hosta publish --app APP_ID --version VERIFIED_VERSION_ID
+# Deliberately invalidates the previous webhook key immediately.
+hosta deployments rotate-key --deployment DEPLOYMENT_ID
+```
+
+Obtain the deployment ID from `deployments get`. Rollback requires an explicit
+version from the same app and a successful manual run. It never chooses a newer
+draft automatically. Disabled deployments reject rollback; use publish to restore.
+Version selection may target any manually verified version; publication event
+history remains planned in issue #5.
+
+Rotation returns `data.webhookKey` only in that command response. Save it securely
+as `HOSTA_WEBHOOK_KEY`; deployment queries contain neither the secret nor its hash.
+No command automatically retries rotation. After a transport failure, inspect
+state before issuing another write. Capture secret-bearing stdout securely and
+avoid forwarding it to shared logs.

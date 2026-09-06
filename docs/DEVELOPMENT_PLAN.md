@@ -2,7 +2,7 @@
 
 评估日期：2026-09-06。状态：开发计划，未实施功能不得视作已完成。
 
-GitHub 同步状态：**已同步并回读验证**：[worktools/hosta issues](https://github.com/worktools/hosta/issues) 共 11 项，附优先级/类型标签、A0/A1/A2 里程碑及双向依赖。完整结构化记录见 [issue-drafts.json](issue-drafts.json)。H 开头编号属于 Hosta，Y 开头属于 Hoya；这些是本地规划编号，不是 GitHub issue 号码。
+GitHub 同步状态：**已同步并回读验证**：[worktools/hosta issues](https://github.com/worktools/hosta/issues) 共 11 项，附优先级/类型标签、A0/A1/A2 里程碑及双向依赖。GitHub issues 是待办状态的权威来源；发布时的中间 JSON 导出不入库。H 开头编号属于 Hosta，Y 开头属于 Hoya；这些是本地规划编号，不是 GitHub issue 号码。
 
 Hosta 维护用户体验、应用/版本/发布、触发、构建和运维控制面；Hoya 独立维护 QuickJS/Wasmtime 执行服务、协议、隔离、host capabilities 和发布产物。通过版本化 HTTP 协议集成，不复制引擎源码，不建立跨仓库相对路径依赖。
 
@@ -198,3 +198,7 @@ GitHub：[hosta #13](https://github.com/worktools/hosta/issues/13)
 - [ ] 用 spawn CLI 的集成测试验证无 TTY、管道输入、JSON 可解析、stderr 分离、guest 失败退出码、无效凭据、服务离线和版本不存在；真实 Hoya JS/WASM smoke 全程命令行。A0 先实现基础命令与最小幂等，A1 扩展治理/诊断子命令，按子项验收。
 
 依赖：[H1](https://github.com/worktools/hosta/issues/3)。
+
+## 部署 CLI 后续切片
+
+新增部署查询、显式版本回滚、停用和密钥轮换；恢复使用既有 publish 命令并指定版本。回滚拒绝跨应用版本、未验证版本和停用部署，不再自动选择最高编号草稿。发布事件历史、部署 ID 与并发运行关联仍在 #5 跟踪。
