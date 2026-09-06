@@ -1,8 +1,6 @@
 # Hosta RFCs
 
-本目录记录 Hosta 的产品与技术决策。Hosta 的目标是成为一个带网页入口的“个人 AI 软件工厂”：用户用自然语言描述自动化需求，系统生成脚本，在受限运行时中验证，随后发布为可通过 HTTP 调用的服务。
-
-当前阶段只追求一条可演示、可验证的主流程，不在首版实现自主进化、复杂工作流或脚本市场。
+当前方向：WASM/QuickJS 开源 serverless 平台，Hoya 独立维护；CLI/API 优先，UI 先展示，AI 为可选增强。[RFC 0013](0013-independent-engine-platform.md) 修订与此冲突的早期交付方向；详见[开发计划](../docs/DEVELOPMENT_PLAN.md)。
 
 ## RFC 状态
 
@@ -21,19 +19,15 @@
 | [0011](0011-llm-sandbox-landscape-survey.md) | LLM 生成代码执行沙箱——业界方案综述与 Hosta 定位 | Informational          |
 | [0012](0012-hoya-sandbox-security-review.md) | Hoya 低成本沙箱安全审查与演进建议                | Informational          |
 
+| [0013](0013-independent-engine-platform.md) | 独立 Hoya 引擎与双运行时平台 | Accepted for planning |
+
 ## 已确定的方向
 
-Hosta 定位为**以 LLM 代码生成为核心的、面向轻量级小程序（mini-app）的研发平台**，参考 Vercel 的低门槛开发者体验。
-
-- 控制面与网页服务：Node.js 22+，单文件 HTTP server。
-- 执行面：`vm.createContext`（JavaScript）和 WebAssembly 进程内执行（Rust/MoonBit，通过 JSPI 支持异步）。
-- 数据通信：WASM host 函数与 `main()` 返回值使用 JSON 信封协议（`{"ok":true,"data":"..."}` / `{"ok":false,"error":{"code":"...","message":"..."}}`）。
-- 小程序粒度：每个程序是独立的、可调用的微型服务，支持 HTTP 调用和程序间调用。
-- 数据管理：每个程序可绑定 JSON 数据源，支持版本化快照和迁移脚本。
-- 版本管理：不可变版本，草稿/发布双指针，手动切换线上版本。
-- LLM 驱动全生命周期：生成、测试、修订、优化均由 AI 辅助。
-- 默认 AI 提供方：DeepSeek，通过 OpenAI-compatible adapter 接入。
-- 本地单机优先；JSON 文件存储，接口保持可迁移至 SQLite/PostgreSQL。
+- 控制面：Node.js + TypeScript；独立执行面：Hoya v1，QuickJS/Wasmtime。
+- CLI 创建、上传、验证、发布、调用、日志查询；UI 展示运行状态。
+- 不可变版本、JSON 数据源、快照和迁移沿用现有数据模型。
+- 当前单机 JSON 存储，事务存储与发布治理按 issues 逐项验收。
+- 旧 RFC 中的 Node 执行、JSPI、网络与互调能力不代表 v1 可用能力，当前边界见兼容性文档。
 
 ## RFC 约定
 

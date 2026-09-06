@@ -11,10 +11,10 @@ export const root = resolve(__dirname, "..");
 export const staticDir = join(root, "dist");
 
 /** 数据文件路径 */
-export const dataFile = join(root, "data", "hosta.json");
+export const dataFile = resolve(process.env.HOSTA_DATA_FILE || join(root, "data", "hosta.json"));
 
 /** 服务器端口 */
-export const port = Number(process.env.PORT) || 4173;
+export const port = Number(process.env.PORT ?? 4173);
 
 /** 当前时间戳（ISO 格式） */
 export function now(): string {

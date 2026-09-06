@@ -1,5 +1,7 @@
 # RFC 0002：MVP 架构与技术选型
 
+> 2026-09-06：CLI 优先、独立 Hoya v1 与双运行时方向见 [RFC 0013](0013-independent-engine-platform.md)；本文保留历史架构记录。
+
 - 状态：Accepted (updated 2026-08-11)
 - 日期：2026-08-04
 

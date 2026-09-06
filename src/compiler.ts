@@ -55,6 +55,10 @@ export async function compileWasm(
   language: string,
   source: string,
 ): Promise<CompileResult> {
+  if (process.env.HOSTA_ENABLE_LOCAL_COMPILER !== "1") {
+    const err = new Error("Upload precompiled WASM with encoding=base64; trusted local source compilation requires HOSTA_ENABLE_LOCAL_COMPILER=1");
+    Object.assign(err,{status:400}); throw err;
+  }
   const workdir = await mkdtemp(join(tmpdir(), "hosta-compile-"));
   try {
     let outputFile: string;
@@ -97,7 +101,7 @@ export async function compileWasm(
       );
     }
     const wasm = await readFile(outputFile);
-    new WebAssembly.Module(wasm);
+
     return { binary: wasm.toString("base64"), size: wasm.length };
   } catch (error: any) {
     const wrapped = new Error(

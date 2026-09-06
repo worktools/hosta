@@ -2,75 +2,30 @@
 export const rustStarter = `#![no_std]
 #![no_main]
 
-use core::panic::PanicInfo;
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
+#[link(wasm_import_module = "env")]
+unsafe extern "C" {
+    fn get_input(ptr: *mut u8, capacity: u32) -> u32;
 }
-
-// JSON envelope helpers — build JSON strings without serde/alloc
-fn ok(data: &str) -> &str {
-    // Safety: single-use static, caller must not reuse
-    // We build the JSON at compile time via the ABI
-    data
-}
-
-fn err(code: &str, msg: &str) -> &str {
-    // Returns JSON error envelope
-    code
-}
-
-// Extern host functions (provided by Hosta)
-extern "C" {
-    fn fetch(ptr: *const u8, len: usize) -> *mut u8;
-    fn log(ptr: *const u8, len: usize);
-    fn now() -> i64;
-    fn get_input(ptr: *mut u8, max_len: usize) -> usize;
-    fn get_datasource(ptr: *mut u8, max_len: usize) -> usize;
-}
-
-#[no_mangle]
-pub extern "C" fn alloc(size: usize) -> *mut u8 {
-    let mut buf = core::mem::MaybeUninit::<[u8; 65536]>::uninit();
-    unsafe { buf.as_mut_ptr() as *mut u8 }
-}
-
-#[no_mangle]
-pub extern "C" fn main() -> i32 {
-    // Read input
-    let mut input_buf = [0u8; 4096];
-    let input_len = unsafe { get_input(input_buf.as_mut_ptr(), 4096) };
-    let _input_str = unsafe {
-        core::str::from_utf8_unchecked(&input_buf[..input_len])
-    };
-
-    // TODO: implement your logic here
-
-    // Read datasource (optional)
-    let mut ds_buf = [0u8; 65536];
-    let ds_len = unsafe { get_datasource(ds_buf.as_mut_ptr(), 65536) };
-    let _ds_str = unsafe {
-        core::str::from_utf8_unchecked(&ds_buf[..ds_len])
-    };
-
-    // Return success envelope
-    let result = r#"{"ok":true,"data":"Hello from WASM!"}"#;
-    let result_bytes = result.as_bytes();
-    let ptr = unsafe { alloc(result_bytes.len() + 1) };
+static mut OUTPUT: [u8; 1048577] = [0; 1048577];
+#[unsafe(no_mangle)]
+pub extern "C" fn hoya_main() -> i32 {
     unsafe {
-        core::ptr::copy_nonoverlapping(result_bytes.as_ptr(), ptr, result_bytes.len());
-        *ptr.add(result_bytes.len()) = 0;
+        let ptr = core::ptr::addr_of_mut!(OUTPUT).cast::<u8>();
+        let len = get_input(ptr, 1048576);
+        *ptr.add(len as usize) = 0;
+        ptr as i32
     }
-    ptr as i32
 }
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
 `;
 
 // ── MoonBit Starter Template ──────────────────────────────────────────────────
 export const moonStarter = `// MoonBit starter for Hosta WASM
 // Compile: moon build --target wasm --release
 //
-// Exports: pub fn run() -> Int
+// Experimental: adapt build exports to memory and hoya_main() -> i32.
+// This scaffold is not a validated v1 module.
 //          Returns pointer to JSON envelope string
 
 pub fn run() -> Int {

@@ -26,6 +26,7 @@ import {
   deepSeekRefineRequirements,
 } from "../llm.js";
 import { execute } from "../executor.js";
+import { artifactHash } from "../../lib/hoya-client.mjs";
 import type { Version } from "../types.js";
 
 export function registerVersionRoutes(
@@ -54,9 +55,9 @@ export function registerVersionRoutes(
             ? "rust"
             : "javascript";
       const compiled =
-        runtime === "wasm"
+        runtime === "wasm" && payload.encoding !== "base64"
           ? await compileWasm(language, code)
-          : { binary: code, size: Buffer.byteLength(code) };
+          : { binary: code, size: runtime === "wasm" ? Buffer.from(code, "base64").length : Buffer.byteLength(code) };
       const diags = diagnosticsFor(compiled.binary, runtime);
       const hasError = diags.some((item) => item.severity === "error");
       const prevVersion = app.draftVersionId
@@ -75,14 +76,14 @@ export function registerVersionRoutes(
         appId: app.id,
         runtime,
         language,
-        sourceCode: runtime === "wasm" ? code : undefined,
+        sourceCode: runtime === "wasm" && payload.encoding !== "base64" ? code : undefined,
         wasmSize: runtime === "wasm" ? compiled.size : undefined,
         number: store.versions.filter((v) => v.appId === app.id).length + 1,
         status: hasError ? "needs_revision" : "ready",
         source: "manual-edit",
         summary: String(payload.summary || "用户编辑的程序版本").slice(0, 500),
         code: compiled.binary,
-        codeSha256: sha(compiled.binary),
+        codeSha256: artifactHash(compiled.binary, runtime),
         inputSchema: inputSchema as Record<string, unknown> | null,
         outputSchema: outputSchema as Record<string, unknown> | null,
         tests:
@@ -169,7 +170,7 @@ export function registerVersionRoutes(
         source: generated.source,
         summary: generated.summary,
         code: compiled.binary,
-        codeSha256: sha(compiled.binary),
+        codeSha256: artifactHash(compiled.binary, app.runtime || "javascript"),
         inputSchema: version?.inputSchema || null,
         outputSchema: version?.outputSchema || null,
         tests: generated.tests,
@@ -259,6 +260,7 @@ export function registerVersionRoutes(
           "NOT_PUBLISHABLE",
           "Version must be in ready status",
         );
+      if (!store.runs.some(r=>r.versionId===version.id && r.trigger==='manual' && r.status==='succeeded')) return error(res,400,'TRIAL_REQUIRED','Run this exact version successfully before publishing');
       const deployment = store.deployments.find((d) => d.appId === app.id);
       if (deployment) {
         deployment.versionId = version.id;
@@ -554,7 +556,7 @@ export function registerVersionRoutes(
         source: revised.source,
         summary: revised.summary,
         code: compiled.binary,
-        codeSha256: sha(compiled.binary),
+        codeSha256: artifactHash(compiled.binary, version.runtime || "javascript"),
         inputSchema: null,
         outputSchema: null,
         tests: revised.tests,

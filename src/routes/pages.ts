@@ -11,7 +11,7 @@ import {
   datasourceByAppId,
 } from "../utils.js";
 import { deepSeekGeneratePage } from "../llm.js";
-import vm from "node:vm";
+import { executeWithHoya, artifactHash } from "../../lib/hoya-client.mjs";
 import type { Page, PageConfig } from "../types.js";
 
 export function registerPageRoutes(
@@ -131,17 +131,10 @@ export function registerPageRoutes(
       try {
         let result: any;
         if (page.processScript && page.processScript.trim()) {
-          const sandbox = {
-            input,
-            datasource,
-            result: null,
-            console: { log: (...args: any[]) => args },
-            JSON,
-          };
-          const code = `(async () => { const process = ${page.processScript.trim()}; result = await process(input, datasource); })();`;
-          const ctx = vm.createContext(sandbox);
-          await vm.runInContext(code, ctx, { timeout: 10000 });
-          result = sandbox.result;
+          const code = `async function main(payload) { const process = (${page.processScript.trim()}); return await process(payload.input,payload.datasource); }`;
+          const response = await executeWithHoya({code,runtime:'javascript',codeSha256:artifactHash(code,'javascript')},{input,datasource},`page-${page.id}-${Date.now()}`);
+          if(response.status!=='succeeded')throw new Error(response.error?.message||'Page script failed');
+          result=response.result;
         } else {
           result = { input, datasource };
         }

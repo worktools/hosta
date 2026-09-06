@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { engineStatus } from "../lib/hoya-client.mjs";
+import { withIdempotency } from "./idempotency.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -61,15 +63,22 @@ const routeRegistrars = [
 
 // ── 服务器 ────────────────────────────────────────────────────────────────────
 
-const server = createServer(
-  async (req: IncomingMessage, res: ServerResponse) => {
+const dispatch = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(
       req.url || "/",
       `http://${req.headers.host || "localhost"}`,
     );
     const method = req.method!;
 
+    if (url.pathname.startsWith('/api/') && process.env.HOSTA_API_TOKEN && req.headers.authorization !== `Bearer ${process.env.HOSTA_API_TOKEN}`) return error(res,401,'UNAUTHORIZED','A valid management API token is required');
     try {
+      if (method === 'GET' && url.pathname === '/api/status') return json(res,200,{service:'hosta',engine:await engineStatus(),generator:process.env.DEEPSEEK_API_KEY?'deepseek':'local-demo',localCompilerEnabled:process.env.HOSTA_ENABLE_LOCAL_COMPILER==='1'});
+      if (method === 'GET' && url.pathname === '/api/runs') {
+        const offset=Number(url.searchParams.get('offset')||0),limit=Number(url.searchParams.get('limit')||20);
+        if(!Number.isInteger(offset)||offset<0||!Number.isInteger(limit)||limit<1||limit>100)return error(res,400,'VALIDATION_ERROR','Invalid pagination');
+        const items=store.runs.filter(r=>['appId','versionId','status','trigger'].every(k=>!url.searchParams.has(k)||(r as unknown as Record<string,unknown>)[k]===url.searchParams.get(k))).slice().reverse();
+        return json(res,200,{items:items.slice(offset,offset+limit),nextOffset:offset+limit<items.length?offset+limit:null});
+      }
       // ── 特殊路由 ──────────────────────────────────────────────────────
 
       // /llms.txt — LLM 上下文描述
@@ -78,6 +87,11 @@ const server = createServer(
         res.end(`# Hosta API
 
 Hosta creates and hosts short JavaScript or WebAssembly functions.
+
+Current execution: independent Hoya v1 only. Use node bin/hosta.mjs --help.
+GET /api/status reports actual readiness. POST /api/apps/:id/versions accepts UTF-8 JS or base64 WASM with encoding=base64; WASM exports memory and hoya_main().
+No Node fallback, ctx.fetch, ctx.call or async host I/O are available in v1. Rebuild legacy WASM artifacts. Local source compilation is opt-in for trusted code.
+The legacy APIs below remain for metadata compatibility; runtime contracts follow v1.
 
 ## Discovery
 - GET /api/apps lists applications, versions, deployments and recent runs.
@@ -112,20 +126,15 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
 - POST /api/apps/:id/pages — create a page. body: {name, pageConfig?, processScript?}. pageConfig is a version "1.0" PageConfig JSON (layout + regions + optional dataSources). processScript is a JavaScript function body: (input, datasource) => processedData.
 - PUT /api/apps/:id/pages/:pageId — update a page's name, pageConfig, or processScript.
 - DELETE /api/apps/:id/pages/:pageId — delete a page.
-- POST /api/apps/:id/pages/:pageId/data — execute the page's processScript. body: input JSON. Returns {data: processedResult}. Uses vm.createContext sandbox with 10s timeout.
+- POST /api/apps/:id/pages/:pageId/data — execute the page's processScript. body: input JSON. Returns {data: processedResult}. Runs in the independent Hoya v1 engine with bounded execution.
 - GET /api/apps/code/:code/pages — public: get pages for display by app code (no auth required).
 - POST /api/ai/generate-page — AI generates a PageConfig JSON. body: {name, appName?, appDescription?, instruction?, appId?}. When appId is provided, datasource context is injected into the prompt. The LLM receives a full component catalog (24+ components with Zod-typed props) and 6 common scenario patterns (Dashboard, Data CRUD, Detail, List/Browse, Form/Wizard, Monitoring/Status). Returns {pageConfig: PageConfig}.
 
-## Runtime contracts (JavaScript ctx object)
-- define async function main(input, ctx).
-- ctx.log(level, message, fields?) writes a structured log (level: debug|info|warn|error, capped at 100 entries).
-- ctx.now() returns the current epoch millisecond timestamp.
-- ctx.call(appCode, input, options?) invokes another PUBLISHED app's current version and returns its result. Depth is capped at 3. Requires the target to be published (active deployment). Usage: const result = await ctx.call('order-summary', input);
-- ctx.fetch(url, options?) fetches data from an external HTTP/HTTPS endpoint. Only GET requests are allowed. Response size is capped at 512KB, timeout at 5s. Localhost URLs are blocked. Returns parsed JSON if content-type contains 'json', otherwise returns text. Usage: const data = await ctx.fetch('https://api.example.com/data');
-- wasm/rust: Rust source for #![no_std] #![no_main] WASM. Exports: alloc(size) -> *mut u8, main() -> i32 (pointer to JSON envelope string). Imports via #[link(wasm_import_module = "env")]: fetch(url_ptr, url_len) -> *mut u8, log(ptr, len), now() -> i64, get_input(ptr, max_len) -> usize, get_datasource(ptr, max_len) -> usize. Hosta compiles with rustc --target wasm32-unknown-unknown. JSPI enables async fetch to look synchronous.
-- JSON envelope protocol: All host function returns & main() return use {"ok":true,"data":"..."} for success, {"ok":false,"error":{"code":"CODE","message":"..."}} for error. Use the helpers: ok(data), err(code, msg), is_ok(ptr), envelope_data(ptr).
-- wasm/moonbit: submit MoonBit source defining pub fn run() -> Int. Hosta compiles with moon build --target wasm. (JSPI async not yet supported for MoonBit)
-- The compiled WASM binary is stored server-side; agents must submit source, not base64 modules.
+## Runtime contracts
+- JS: function main(input, ctx) or async function main(input, ctx), JSON result.
+- ctx.log(level, message, fields?) and ctx.now(); no fetch/call/timers/Node APIs.
+- WASM: hoya-json-v1, memory and hoya_main() -> pointer to NUL-terminated JSON.
+- Use precompiled binary upload with encoding=base64. MoonBit is unverified.
 `);
         return;
       }
@@ -217,15 +226,15 @@ Hosta creates and hosts short JavaScript or WebAssembly functions.
         err.message || "Unexpected error",
       );
     }
-  },
-);
+  };
+const server = createServer(withIdempotency(dispatch));
 
 // ── 启动 ──────────────────────────────────────────────────────────────────────
 
-const port = Number(process.env.PORT) || configPort;
+const port = Number(process.env.PORT ?? configPort);
 server.listen(port, "127.0.0.1", () => {
   armAllSchedules();
-  console.log(`Hosta listening on http://127.0.0.1:${port}`);
+  console.log(`Hosta listening on http://127.0.0.1:${(server.address() as {port:number}).port}`);
 });
 
 // ── 优雅退出 — 确保 hoya sidecar 子进程不会变成孤儿进程 ──────────────────────────

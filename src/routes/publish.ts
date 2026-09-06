@@ -145,7 +145,7 @@ export function registerPublishRoutes(
       if (!app) return error(res, 404, "NOT_FOUND", "App not found");
       const payload = await body(req);
       const version = versionById(
-        (payload.versionId as string) || app.draftVersionId || "",
+        (payload.versionId as string) || "",
       );
       if (!version || version.appId !== app.id || version.status !== "ready")
         return error(
@@ -169,7 +169,7 @@ export function registerPublishRoutes(
           "Run this version successfully before publishing",
         );
       let deployment = store.deployments.find((d) => d.appId === app.id);
-      const webhookKey = randomBytes(24).toString("base64url");
+      const webhookKey = deployment ? undefined : randomBytes(24).toString("base64url");
       if (!deployment) {
         deployment = {
           id: id("dep"),
@@ -184,7 +184,7 @@ export function registerPublishRoutes(
       }
       deployment.versionId = version.id;
       deployment.status = "active";
-      deployment.keyHash = sha(webhookKey);
+      if (webhookKey) deployment.keyHash = sha(webhookKey);
       deployment.updatedAt = now();
       app.publishedVersionId = version.id;
       app.updatedAt = now();

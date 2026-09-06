@@ -61,10 +61,13 @@ export interface Run {
   versionNumber: number;
   datasourceSnapshotId: string | null;
   trigger: string;
-  status: "running" | "succeeded" | "failed" | "timed_out" | "rejected";
+  status: "running" | "succeeded" | "failed" | "timed_out" | "rejected" | "internal_error";
   input: Record<string, unknown>;
   result?: unknown;
-  error?: { code: string; message: string; schemaErrors?: string[] } | null;
+  error?: { code: string; message: string; schemaErrors?: string[]; retryable?: boolean } | null;
+  artifactSha256?: string;
+  protocolVersion?: string;
+  metrics?: {durationMs: number};
   logs: LogEntry[];
   durationMs?: number;
   parentRunId: string | null;
@@ -217,7 +220,7 @@ export interface PublicApp extends App {
     createdAt: string;
     updatedAt: string;
   }>;
-  deployments: Deployment[];
+  deployments: Array<Omit<Deployment, "keyHash">>;
   schedules: Schedule[];
   modelCalls: ModelCall[];
   runs: Run[];

@@ -5,12 +5,13 @@
   "description": "A local AI software factory MVP",
   "type": "module",
   "scripts": {
-    "start": "node --experimental-wasm-jspi --env-file-if-exists=.env dist/index.js",
+    "start": "node --env-file-if-exists=.env dist/index.js",
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build",
+    "build": "vite build && tsc",
     "typecheck": "tsc --noEmit",
     "build:ts": "tsc",
-    "test": "node --experimental-wasm-jspi --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:smoke": "node --test test/engine-smoke.test.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -34,5 +35,8 @@
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
     "vite": "^8.2.0"
+  },
+  "bin": {
+    "hosta": "bin/hosta.mjs"
   }
 }

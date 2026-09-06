@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { store, save } from "../store.js";
 import {
   json,
+  body,
   error,
   appById,
   deploymentById,
@@ -53,23 +54,16 @@ export function registerDeploymentRoutes(
         return error(res, 404, "NOT_FOUND", "Deployment not found");
       const app = appById(deployment.appId);
       if (!app) return error(res, 404, "NOT_FOUND", "App not found");
-      // Find the previous version(s) that were published before
-      const prevVersions = store.versions
-        .filter(
-          (v) =>
-            v.appId === app.id &&
-            v.status === "ready" &&
-            v.id !== deployment.versionId,
-        )
-        .sort((a, b) => b.number - a.number);
-      const prevVersion = prevVersions[0];
+      const payload = await body(req);
+      if (typeof payload.versionId !== "string" || !payload.versionId)
+        return error(res, 400, "VERSION_REQUIRED", "Choose an explicit versionId to roll back to");
+      const prevVersion = store.versions.find(v => v.id === payload.versionId && v.appId === app.id);
       if (!prevVersion)
-        return error(
-          res,
-          400,
-          "NO_ROLLBACK",
-          "No previous version to roll back to",
-        );
+        return error(res, 404, "NOT_FOUND", "Version not found for this application");
+      if (prevVersion.status !== "ready" || !store.runs.some(r => r.versionId === prevVersion.id && r.trigger === "manual" && r.status === "succeeded"))
+        return error(res, 400, "TRIAL_REQUIRED", "Run the selected version successfully before rollback");
+      if (deployment.status !== "active")
+        return error(res, 409, "DEPLOYMENT_INACTIVE", "Use publish with an explicit version to restore this deployment");
       deployment.versionId = prevVersion.id;
       deployment.updatedAt = new Date().toISOString();
       app.publishedVersionId = prevVersion.id;

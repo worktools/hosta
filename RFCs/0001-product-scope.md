@@ -1,5 +1,7 @@
 # RFC 0001：产品边界与 MVP
 
+> 2026-09-06：范围、独立引擎边界和交付顺序按 [RFC 0013](0013-independent-engine-platform.md) 修订；本文保留历史决策，不代表当前实现状态。
+
 - 状态：Accepted for planning
 - 日期：2026-08-04
 

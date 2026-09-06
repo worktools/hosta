@@ -59,12 +59,13 @@ export function error(
 export async function body(
   req: IncomingMessage,
 ): Promise<Record<string, unknown>> {
+  if (Object.hasOwn(req, "parsedBody")) return (req as IncomingMessage & { parsedBody: Record<string, unknown> }).parsedBody;
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 1_048_576) {
-      const err = new Error("Request body exceeds 1 MiB");
+    if (size > 2_097_152) {
+      const err = new Error("Request body exceeds 2 MiB");
       (err as any).status = 413;
       throw err;
     }
@@ -314,7 +315,7 @@ export function publicApp(app: App): PublicApp {
       createdAt: eds.createdAt,
       updatedAt: eds.updatedAt,
     })),
-    deployments: store.deployments.filter((d) => d.appId === app.id),
+    deployments: store.deployments.filter((d) => d.appId === app.id).map(({ keyHash, ...d }) => d),
     schedules: store.schedules.filter((s) => s.appId === app.id),
     modelCalls: store.modelCalls
       .filter((call) => call.appId === app.id)

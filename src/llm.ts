@@ -1,3 +1,4 @@
+import { artifactHash } from "../lib/hoya-client.mjs";
 import type {
   LLMResult,
   LLMSampleResult,
@@ -441,7 +442,7 @@ export async function generateVersion(app: App) {
     source: generated.source,
     summary: generated.summary,
     code: compiled.binary,
-    codeSha256: sha(compiled.binary),
+    codeSha256: artifactHash(compiled.binary, runtime),
     inputSchema: null,
     outputSchema: null,
     tests: generated.tests,

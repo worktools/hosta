@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Store } from "./types.js";
 import { dataFile, now } from "./config.js";
@@ -40,9 +40,10 @@ store.pages ??= [];
 /** 序列化写入：保证并发 save() 调用按顺序执行 */
 let serial = Promise.resolve();
 export function save(): Promise<void> {
-  serial = serial.then(async () => {
+  serial = serial.catch(() => {}).then(async () => {
     await mkdir(dirname(dataFile), { recursive: true });
-    await writeFile(dataFile, JSON.stringify(store, null, 2));
+    await writeFile(`${dataFile}.tmp`, JSON.stringify(store, null, 2));
+    await rename(`${dataFile}.tmp`, dataFile);
   });
   return serial;
 }

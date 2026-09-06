@@ -1,4 +1,3 @@
-import vm from "node:vm";
 import type { Version, Diagnostic, QualityScore } from "./types.js";
 
 // ── 代码校验 ──────────────────────────────────────────────────────────────────
@@ -7,18 +6,12 @@ export function validateCode(
   code: string,
   runtime = "javascript",
 ): string | null {
-  if (typeof code !== "string" || code.length === 0 || code.length > 131072)
-    return "Code must be between 1 and 131072 characters";
+  if (typeof code !== "string" || !code.length || Buffer.byteLength(code) > (runtime === "wasm" ? 1398104 : 131072)) return "Artifact size exceeds supported limit";
   if (runtime === "wasm") {
-    try {
-      new WebAssembly.Module(Buffer.from(code, "base64"));
-      return null;
-    } catch {
-      return "WASM mode expects a valid base64-encoded WebAssembly module";
-    }
+    const bytes = Buffer.from(code, "base64");
+    return bytes.toString("base64") === code && bytes.subarray(0,8).equals(Buffer.from([0,97,115,109,1,0,0,0])) ? null : "Expected canonical base64 WASM bytes";
   }
-  if (!/async\s+function\s+main\s*\(/.test(code))
-    return "Code must define async function main(input, ctx)";
+  if (!/(?:async\s+)?function\s+main\s*\(/.test(code)) return "Define function main(input, ctx)";
   if (
     /\b(require|process|globalThis|import\s*\(|child_process|fs|eval|Function)\b/.test(
       code,
@@ -42,23 +35,15 @@ export function diagnosticsFor(
       message: policyError,
     });
   } else {
-    try {
-      new vm.Script(`"use strict"; ${code}`);
-    } catch (err: any) {
-      diagnostics.push({
-        severity: "error",
-        code: "SYNTAX_ERROR",
-        message: String(err.message),
-      });
-    }
     if (runtime === "wasm") {
       diagnostics.push({
         severity: "info",
         code: "WASM_ISOLATION",
         message:
-          "WASM 运行于 JSPI 异步环境；可调用 fetch/log/now/get_input/get_datasource 等 host 函数。",
+          "WASM 使用 Hoya hoya-json-v1 ABI，由独立引擎校验和执行。",
       });
     } else {
+      diagnostics.push({ severity: "info", code: "ENGINE_VALIDATION_REQUIRED", message: "上传仅做静态检查；语法和运行结果由 Hoya 校验，发布前必须手动运行成功。" });
       if (!/ctx\.log\s*\(/.test(code))
         diagnostics.push({
           severity: "info",
