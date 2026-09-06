@@ -5,3 +5,10 @@ data/hosta.json
 examples/**/_build/
 examples/**/*.wasm
 examples/**/target/
+.DS_Store
+
+# Local integration fixture, build output and issue export scratch files
+.engine-test/
+coverage/
+*.tsbuildinfo
+docs/issue-drafts.json
