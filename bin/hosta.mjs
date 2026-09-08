@@ -14,8 +14,9 @@ hosta deployments get --app ID
 hosta deployments rollback --deployment ID --version ID
 hosta deployments disable|rotate-key --deployment ID
 hosta invoke --code CODE [--input FILE|-]
-hosta runs list [--app ID] [--status STATE] [--offset N] [--limit N]
+hosta runs list [--app ID] [--status STATE] [--trigger SOURCE] [--offset N] [--limit N]
 hosta runs get|logs --run ID [--wait]
+hosta runs retry --run ID --yes [--wait]
 
 --json                  Stable JSON on stdout (also the default)
 --url URL               Hosta URL (HOSTA_URL, default http://127.0.0.1:4173)
@@ -35,8 +36,8 @@ class Failure extends Error {
   constructor(code, message, exit = 1, data = null, retryable = false) { super(message); Object.assign(this, { code, exit, data, retryable }); }
 }
 async function stdin() { const chunks = []; let size = 0; for await (const chunk of process.stdin) { size += chunk.length; if (size > 1024 * 1024) throw new Failure('INPUT_TOO_LARGE', 'stdin exceeds 1 MiB', 2); chunks.push(chunk); } return Buffer.concat(chunks); }
-const options = Object.fromEntries(['url','timeout','name','description','runtime','app','deployment','version','source','input','code','run','status','offset','limit','idempotency-key'].map(name => [name, { type: 'string' }]));
-Object.assign(options, { json: { type: 'boolean' }, wait: { type: 'boolean' }, help: { type: 'boolean' }, version: { type: 'string' } });
+const options = Object.fromEntries(['url','timeout','name','description','runtime','app','deployment','version','source','input','code','run','status','trigger','offset','limit','idempotency-key'].map(name => [name, { type: 'string' }]));
+Object.assign(options, { json: { type: 'boolean' }, yes: { type: 'boolean' }, wait: { type: 'boolean' }, help: { type: 'boolean' }, version: { type: 'string' } });
 async function main() {
   if (process.argv.length === 3 && process.argv[2] === '--version') return { version: '0.1.0', cliSchemaVersion: '1' };
   let args; try { args = parseArgs({ options, allowPositionals: true }); } catch (e) { throw new Failure('USAGE_ERROR', e.message, 2); }
@@ -84,8 +85,13 @@ async function main() {
     case 'deployments disable': data = await request(`/api/deployments/${required('deployment')}/unpublish`, {}); break;
     case 'deployments rotate-key': data = await request(`/api/deployments/${required('deployment')}/regenerate-key`, {}); break;
     case 'invoke': required('code'); if (!process.env.HOSTA_WEBHOOK_KEY) throw new Failure('USAGE_ERROR','Set HOSTA_WEBHOOK_KEY for invoke',2); data=await request(`/invoke/${encodeURIComponent(v.code)}`,await input(),true); break;
+    case 'runs retry':
+      required('run');
+      if (!v.yes) throw new Failure('USAGE_ERROR', 'Retry executes again and may repeat side effects; pass --yes to confirm', 2);
+      if (v.input || v.version || v.source || v.app) throw new Failure('USAGE_ERROR', 'Retry uses the original version and input; overrides are not supported', 2);
+      data = await request(`/api/runs/${required('run')}/retry`, { confirm: true }); break;
     case 'runs list': {
-      const query=new URLSearchParams(); for(const [flag,key] of [['app','appId'],['version','versionId'],['status','status'],['offset','offset'],['limit','limit']]) if(v[flag]) query.set(key,v[flag]);
+      const query=new URLSearchParams(); for(const [flag,key] of [['app','appId'],['version','versionId'],['status','status'],['trigger','trigger'],['offset','offset'],['limit','limit']]) if(v[flag]) query.set(key,v[flag]);
       data=await request(`/api/runs?${query}`); break;
     }
     case 'runs get': case 'runs logs': data=await request(`/api/runs/${required('run')}`); break;

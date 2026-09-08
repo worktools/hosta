@@ -154,3 +154,29 @@ as `HOSTA_WEBHOOK_KEY`; deployment queries contain neither the secret nor its ha
 No command automatically retries rotation. After a transport failure, inspect
 state before issuing another write. Capture secret-bearing stdout securely and
 avoid forwarding it to shared logs.
+
+## Retry a recorded execution
+
+```sh
+hosta runs get --run RUN_ID
+hosta runs retry --run RUN_ID --yes --wait
+hosta runs list --app APP_ID --trigger retry --status succeeded --limit 20
+```
+
+Retry sends `POST /api/runs/:id/retry` with `{"confirm":true}` using the management
+credential. It creates a new run with `retryOf` pointing to the immediate original
+run and `trigger: "retry"`. The original record remains unchanged. It uses the
+original immutable version and JSON input, even if another version was uploaded
+or published later. Input/version overrides are rejected; use `run` for new input.
+
+This is a new execution and may repeat side effects. `--yes` is required; there
+is no prompt or automatic retry. Running executions cannot be retried. Missing
+original apps/versions are rejected. Success exits 0; guest failure exits 4 and
+still includes the new run ID and lineage. On a transport timeout, query runs
+before trying again: the server may have accepted the execution.
+
+A retry uses the **current datasource** and current engine configuration; it is
+not a historical environment replay. It does not restore a deployment, change
+published versions or count as a successful manual publication trial. Existing
+records may omit `retryOf`; new non-retry runs report null. Filters combine with
+app, version, status and pagination; trigger matching is exact.
