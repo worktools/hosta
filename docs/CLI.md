@@ -232,3 +232,13 @@ page memory is bounded by the requested limit, even for the full response mode.
 Highly selective filters or deep offsets still scan older records. Offset pages
 can shift when new runs arrive; refresh resets the view to page one. This is not
 a database index, cursor snapshot or retention policy (tracked in issue #10).
+
+## Request error boundaries
+
+Malformed management JSON returns `400 INVALID_JSON`; non-object management
+payloads return `400 INVALID_REQUEST`. Bodies over 2 MiB return
+`413 PAYLOAD_TOO_LARGE`. These errors do not consume an idempotency key.
+Manual execution inputs still accept JSON scalar/array values. Invalid webhook
+or invoke JSON also returns 400. Unknown API/invocation routes return JSON 404,
+not the workspace HTML. Invalid engine response fields report `ENGINE_PROTOCOL`;
+engine extensions cannot overwrite Hosta-owned run metadata.

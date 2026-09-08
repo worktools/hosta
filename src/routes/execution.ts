@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { store, save } from "../store.js";
 import {
   json,
+  requestError,
   error,
   body,
   appById,
@@ -40,7 +41,7 @@ export function registerExecutionRoutes(
       if (original.artifactSha256 && original.artifactSha256 !== version.codeSha256)
         return error(res, 409, "ARTIFACT_HASH_MISMATCH", "Original artifact no longer matches the stored version");
       json(res, 201, await execute(version, structuredClone(original.input), "retry", { retryOf: original.id }));
-    })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
+    })().catch((e) => requestError(res, e));
     return true;
   }
 
@@ -52,7 +53,7 @@ export function registerExecutionRoutes(
       if (!version) return error(res, 404, "NOT_FOUND", "Version not found");
       const input = await body(req);
       json(res, 201, await execute(version, input, "manual"));
-    })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
+    })().catch((e) => requestError(res, e));
     return true;
   }
 
@@ -93,7 +94,7 @@ export function registerExecutionRoutes(
         run,
         quality,
       });
-    })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
+    })().catch((e) => requestError(res, e));
     return true;
   }
 
@@ -119,7 +120,7 @@ export function registerExecutionRoutes(
       if (!version) return error(res, 404, "NOT_FOUND", "Version not found");
       const deploymentContext = { deploymentId: deployment.id, deploymentEventId: deployment.lastEventId };
       json(res, 200, await execute(version, await body(req), "webhook", deploymentContext));
-    })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
+    })().catch((e) => requestError(res, e));
     return true;
   }
 
@@ -180,7 +181,7 @@ export function registerExecutionRoutes(
         200,
         await execute(version, await inputFromRequest(req), "invoke-pinned", deploymentContext),
       );
-    })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
+    })().catch((e) => requestError(res, e));
     return true;
   }
 
@@ -218,7 +219,7 @@ export function registerExecutionRoutes(
         200,
         await execute(version!, await inputFromRequest(req), "invoke", deploymentContext),
       );
-    })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
+    })().catch((e) => requestError(res, e));
     return true;
   }
 
