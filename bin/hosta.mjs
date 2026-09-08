@@ -11,6 +11,7 @@ hosta versions list --app ID
 hosta run --version ID [--input FILE|-] [--wait]
 hosta publish --app ID --version ID
 hosta deployments get --app ID
+hosta deployments history --deployment ID [--offset N] [--limit N]
 hosta deployments rollback --deployment ID --version ID
 hosta deployments disable|rotate-key --deployment ID
 hosta invoke --code CODE [--input FILE|-]
@@ -81,6 +82,11 @@ async function main() {
     case 'run': data = await request(`/api/versions/${required('version')}/run`, await input()); break;
     case 'publish': data = await request(`/api/apps/${required('app')}/publish`, { versionId: decodeURIComponent(required('version')) }); break;
     case 'deployments get': data = await request(`/api/apps/${required('app')}/deployment`); break;
+    case 'deployments history': {
+      const query = new URLSearchParams();
+      for (const flag of ['offset','limit']) if (v[flag]) query.set(flag,v[flag]);
+      data = await request(`/api/deployments/${required('deployment')}/history?${query}`); break;
+    }
     case 'deployments rollback': data = await request(`/api/deployments/${required('deployment')}/rollback`, { versionId: decodeURIComponent(required('version')) }); break;
     case 'deployments disable': data = await request(`/api/deployments/${required('deployment')}/unpublish`, {}); break;
     case 'deployments rotate-key': data = await request(`/api/deployments/${required('deployment')}/regenerate-key`, {}); break;

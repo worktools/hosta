@@ -27,6 +27,9 @@ test('real Hoya: JS/Rust WASM CLI publish/invoke, guest timeout and engine outag
     const run=await call(['run','--version',version.id,'--input','-'],JSON.stringify(input));assert.equal(run.code,0,run.out);assert.deepEqual(run.body.data.result,input);
     const published=(await call(['publish','--app',app.id,'--version',version.id])).body.data;
     const invoke=await call(['invoke','--code',app.code,'--input','-'],JSON.stringify(input),{HOSTA_WEBHOOK_KEY:published.webhookKey});assert.equal(invoke.code,0,invoke.out);assert.deepEqual(invoke.body.data.result,input);
+    assert.equal(invoke.body.data.deploymentId,published.deployment.id);
+    assert.equal(invoke.body.data.deploymentEventId,published.deployment.lastEventId);
+    assert.equal((await call(['deployments','history','--deployment',published.deployment.id])).body.data.items[0].versionId,version.id);
     assert.equal((await call(['runs','get','--run',invoke.body.data.id])).body.data.artifactSha256,version.codeSha256);
     const retried=await call(['runs','retry','--run',invoke.body.data.id,'--yes','--wait']);
     assert.equal(retried.code,0,retried.out);

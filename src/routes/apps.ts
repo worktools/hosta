@@ -194,6 +194,7 @@ export function registerAppRoutes(
       }
       store.apps = store.apps.filter((item) => item.id !== app.id);
       store.versions = store.versions.filter((item) => item.appId !== app.id);
+      store.deploymentEvents = store.deploymentEvents.filter(e => e.appId !== app.id);
       store.deployments = store.deployments.filter(
         (item) => item.appId !== app.id,
       );

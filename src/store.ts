@@ -12,6 +12,7 @@ async function loadStore(): Promise<Store> {
   } catch (error: any) {
     if (error.code !== "ENOENT") throw error;
     return {
+      deploymentEvents: [],
       apps: [],
       versions: [],
       deployments: [],
@@ -30,6 +31,7 @@ async function loadStore(): Promise<Store> {
 export let store: Store = await loadStore();
 
 // 初始化可能缺失的数组
+store.deploymentEvents ??= [];
 store.schedules ??= [];
 store.modelCalls ??= [];
 store.datasources ??= [];

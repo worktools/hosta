@@ -1,3 +1,4 @@
+import { recordDeploymentEvent, deploymentHistoryLimit } from "../deployment-history.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { store, save } from "../store.js";
 import {
@@ -32,6 +33,7 @@ export function registerDeploymentRoutes(
       : null;
     json(res, 200, {
       id: deployment.id,
+      lastEventId: deployment.lastEventId ?? null,
       appId: deployment.appId,
       status: deployment.status,
       versionId: deployment.versionId,
@@ -40,6 +42,17 @@ export function registerDeploymentRoutes(
       createdAt: deployment.createdAt,
       updatedAt: deployment.updatedAt,
     });
+    return true;
+  }
+
+  const historyMatch = url.pathname.match(/^\/api\/deployments\/([^/]+)\/history$/);
+  if (method === "GET" && historyMatch) {
+    if (!deploymentById(historyMatch[1])) return (error(res,404,"NOT_FOUND","Deployment not found"),true);
+    const offset = Number(url.searchParams.get("offset") || 0), limit = Number(url.searchParams.get("limit") || 20);
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      return (error(res,400,"VALIDATION_ERROR","Invalid pagination"),true);
+    const events = store.deploymentEvents.filter(e => e.deploymentId === historyMatch[1]).reverse();
+    json(res,200,{ items: events.slice(offset,offset+limit), nextOffset: offset+limit < events.length ? offset+limit : null, retentionLimit: deploymentHistoryLimit });
     return true;
   }
 
@@ -64,12 +77,15 @@ export function registerDeploymentRoutes(
         return error(res, 400, "TRIAL_REQUIRED", "Run the selected version successfully before rollback");
       if (deployment.status !== "active")
         return error(res, 409, "DEPLOYMENT_INACTIVE", "Use publish with an explicit version to restore this deployment");
+      const previousVersionId = deployment.versionId;
       deployment.versionId = prevVersion.id;
       deployment.updatedAt = new Date().toISOString();
       app.publishedVersionId = prevVersion.id;
       app.updatedAt = new Date().toISOString();
+      const event = recordDeploymentEvent(deployment, "rollback", previousVersionId);
       await save();
       json(res, 200, {
+        deploymentEventId: event.id,
         deploymentId: deployment.id,
         versionId: prevVersion.id,
         versionNumber: prevVersion.number,
@@ -94,8 +110,9 @@ export function registerDeploymentRoutes(
         app.publishedVersionId = null;
         app.updatedAt = new Date().toISOString();
       }
+      const event = recordDeploymentEvent(deployment, "disable", deployment.versionId);
       await save();
-      json(res, 200, { deploymentId: deployment.id, status: "inactive" });
+      json(res, 200, { deploymentId: deployment.id, deploymentEventId: event.id, status: "inactive" });
     })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
     return true;
   }
@@ -112,8 +129,10 @@ export function registerDeploymentRoutes(
       const webhookKey = randomBytes(24).toString("base64url");
       deployment.keyHash = sha(webhookKey);
       deployment.updatedAt = new Date().toISOString();
+      const event = recordDeploymentEvent(deployment, "rotate_key", deployment.versionId);
       await save();
       json(res, 200, {
+        deploymentEventId: event.id,
         deploymentId: deployment.id,
         webhookKey,
         webhookUrl: `/hooks/${deployment.id}`,
