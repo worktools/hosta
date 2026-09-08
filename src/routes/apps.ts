@@ -30,7 +30,17 @@ export function registerAppRoutes(
 
   // GET /api/apps
   if (method === "GET" && url.pathname === "/api/apps") {
-    json(res, 200, store.apps.map(publicApp));
+    if (url.searchParams.get("view") === "summary") {
+      const versions = new Map(store.versions.map(v => [v.id, v]));
+      const briefVersion = (id: string | null) => {
+        const v = id && versions.get(id);
+        return v ? { id: v.id, number: v.number, status: v.status, codeSha256: v.codeSha256 } : null;
+      };
+      json(res, 200, store.apps.map(a => ({
+        id: a.id, name: a.name, description: a.description, runtime: a.runtime, code: a.code,
+        draftVersion: briefVersion(a.draftVersionId), publishedVersion: briefVersion(a.publishedVersionId),
+      })));
+    } else json(res, 200, store.apps.map(publicApp));
     return true;
   }
 

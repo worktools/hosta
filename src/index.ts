@@ -1,3 +1,4 @@
+import { queryRuns } from "./run-query.js";
 import { createServer } from "node:http";
 import { engineStatus } from "../lib/hoya-client.mjs";
 import { withIdempotency } from "./idempotency.js";
@@ -74,10 +75,8 @@ const dispatch = async (req: IncomingMessage, res: ServerResponse) => {
     try {
       if (method === 'GET' && url.pathname === '/api/status') return json(res,200,{service:'hosta',engine:await engineStatus(),generator:process.env.DEEPSEEK_API_KEY?'deepseek':'local-demo',localCompilerEnabled:process.env.HOSTA_ENABLE_LOCAL_COMPILER==='1'});
       if (method === 'GET' && url.pathname === '/api/runs') {
-        const offset=Number(url.searchParams.get('offset')||0),limit=Number(url.searchParams.get('limit')||20);
-        if(!Number.isInteger(offset)||offset<0||!Number.isInteger(limit)||limit<1||limit>100)return error(res,400,'VALIDATION_ERROR','Invalid pagination');
-        const items=store.runs.filter(r=>['appId','versionId','status','trigger'].every(k=>!url.searchParams.has(k)||(r as unknown as Record<string,unknown>)[k]===url.searchParams.get(k))).slice().reverse();
-        return json(res,200,{items:items.slice(offset,offset+limit),nextOffset:offset+limit<items.length?offset+limit:null});
+        try { return json(res, 200, queryRuns(store.runs, url.searchParams)); }
+        catch { return error(res, 400, 'VALIDATION_ERROR', 'Invalid pagination'); }
       }
       // ── 特殊路由 ──────────────────────────────────────────────────────
 

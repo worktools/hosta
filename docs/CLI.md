@@ -180,3 +180,20 @@ not a historical environment replay. It does not restore a deployment, change
 published versions or count as a successful manual publication trial. Existing
 records may omit `retryOf`; new non-retry runs report null. Filters combine with
 app, version, status and pagination; trigger matching is exact.
+
+## Lightweight read-only workspace
+
+The status page requests `/api/apps?view=summary` and
+`/api/runs?view=summary&appId=APP_ID&limit=20&offset=0`. These opt-in views omit
+source, input/output, datasource and logs; run summaries expose `errorCode`.
+The original endpoints without `view=summary` keep their full response format.
+Open a run to fetch its complete `/api/runs/:id` detail on demand. The UI supports
+status filters and previous/next pages, independent engine-status errors and
+cancels obsolete requests when changing selection. Management authentication
+still applies to both views; the UI directs credential-protected users to CLI.
+
+Run queries scan newest-first until the page and one lookahead match are found;
+page memory is bounded by the requested limit, even for the full response mode.
+Highly selective filters or deep offsets still scan older records. Offset pages
+can shift when new runs arrive; refresh resets the view to page one. This is not
+a database index, cursor snapshot or retention policy (tracked in issue #10).
