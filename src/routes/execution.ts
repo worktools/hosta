@@ -117,7 +117,8 @@ export function registerExecutionRoutes(
         );
       const version = versionById(deployment.versionId);
       if (!version) return error(res, 404, "NOT_FOUND", "Version not found");
-      json(res, 200, await execute(version, await body(req), "webhook"));
+      const deploymentContext = { deploymentId: deployment.id, deploymentEventId: deployment.lastEventId };
+      json(res, 200, await execute(version, await body(req), "webhook", deploymentContext));
     })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
     return true;
   }
@@ -173,10 +174,11 @@ export function registerExecutionRoutes(
           "UNAUTHORIZED",
           "A valid Bearer key is required",
         );
+      const deploymentContext = { deploymentId: deployment.id, deploymentEventId: deployment.lastEventId };
       json(
         res,
         200,
-        await execute(version, await inputFromRequest(req), "invoke-pinned"),
+        await execute(version, await inputFromRequest(req), "invoke-pinned", deploymentContext),
       );
     })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
     return true;
@@ -210,10 +212,11 @@ export function registerExecutionRoutes(
           "A valid Bearer key is required",
         );
       const version = versionById(deployment.versionId);
+      const deploymentContext = { deploymentId: deployment.id, deploymentEventId: deployment.lastEventId };
       json(
         res,
         200,
-        await execute(version!, await inputFromRequest(req), "invoke"),
+        await execute(version!, await inputFromRequest(req), "invoke", deploymentContext),
       );
     })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
     return true;

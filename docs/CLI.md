@@ -135,6 +135,7 @@ execute through Hoya v1; legacy network/inter-app guest APIs are unavailable.
 
 ```sh
 hosta deployments get --app APP_ID
+hosta deployments history --deployment DEPLOYMENT_ID --limit 20 --offset 0
 hosta deployments rollback --deployment DEPLOYMENT_ID --version VERIFIED_VERSION_ID
 hosta deployments disable --deployment DEPLOYMENT_ID
 # Restore with an explicit successfully tested version; existing key is retained.
@@ -146,14 +147,48 @@ hosta deployments rotate-key --deployment DEPLOYMENT_ID
 Obtain the deployment ID from `deployments get`. Rollback requires an explicit
 version from the same app and a successful manual run. It never chooses a newer
 draft automatically. Disabled deployments reject rollback; use publish to restore.
-Version selection may target any manually verified version; publication event
-history remains planned in issue #5.
+Version selection may target any manually verified version. The legacy
+`set-default-version` API now requires an active deployment; creating or restoring
+a deployment must use publish, otherwise it returns `409 DEPLOYMENT_INACTIVE`.
+
+History uses `GET /api/deployments/:id/history` with the management credential.
+It returns newest-first `items`, `nextOffset` (null at the end), and
+`retentionLimit: 1000`. Offset defaults to 0; limit defaults to 20 (maximum 100).
+Events record `publish`, `restore`, `rollback`, `disable`, `rotate_key`, or
+`set_default`, with the deployment/app IDs, previous and selected version IDs,
+artifact hash, resulting status and timestamp. They contain no source or keys.
+Restart preserves history. Pagination uses live offsets; refresh from offset 0
+after a concurrent deployment change to avoid shifted pages.
+
+Deployment queries and publish receipts include `lastEventId`; other mutation
+receipts include `deploymentEventId`. Webhook/invoke runs and run summaries
+include `deploymentId` and `deploymentEventId`, captured with version selection
+before reading request input. A concurrent publish does not relabel an in-flight
+run. For pinned-version invokes, `versionId` identifies the actual requested
+version while the deployment event describes the current deployment state.
+Manual runs and retries have null deployment context.
+
+This operational history retains the latest 1000 events per deployment. Older
+run event IDs can therefore outlive their retained events. Existing stores start
+with empty history and no event ID until the next deployment action; earlier
+events are not reconstructed. App deletion/reset removes related history.
+It shares the existing single-process JSON persistence and is not a durable
+compliance audit log; transactional failure recovery remains in issue #10.
 
 Rotation returns `data.webhookKey` only in that command response. Save it securely
 as `HOSTA_WEBHOOK_KEY`; deployment queries contain neither the secret nor its hash.
 No command automatically retries rotation. After a transport failure, inspect
 state before issuing another write. Capture secret-bearing stdout securely and
 avoid forwarding it to shared logs.
+
+To invoke the stable webhook directly, set `DEPLOYMENT_ID` from the deployment
+query and use the saved key (never enable shell tracing around credentials):
+
+```sh
+curl --fail-with-body "$HOSTA_URL/hooks/$DEPLOYMENT_ID" \
+  -H "Authorization: Bearer $HOSTA_WEBHOOK_KEY" \
+  -H 'Content-Type: application/json' --data '{"value":8}'
+```
 
 ## Retry a recorded execution
 

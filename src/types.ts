@@ -44,7 +44,20 @@ export interface TestCase {
   expectedOutput?: Record<string, unknown>;
 }
 
+export interface DeploymentEvent {
+  id: string;
+  deploymentId: string;
+  appId: string;
+  action: "publish" | "restore" | "rollback" | "disable" | "rotate_key" | "set_default";
+  previousVersionId: string | null;
+  versionId: string;
+  artifactSha256: string | null;
+  status: "active" | "inactive";
+  createdAt: string;
+}
+
 export interface Deployment {
+  lastEventId?: string;
   id: string;
   appId: string;
   versionId: string;
@@ -55,6 +68,8 @@ export interface Deployment {
 }
 
 export interface Run {
+  deploymentId?: string | null;
+  deploymentEventId?: string | null;
   retryOf?: string | null;
   id: string;
   appId: string;
@@ -189,6 +204,7 @@ export interface Diagnostic {
 }
 
 export interface Store {
+  deploymentEvents: DeploymentEvent[];
   apps: App[];
   versions: Version[];
   deployments: Deployment[];
@@ -275,6 +291,8 @@ export interface WasmEnvelope {
 }
 
 export interface ExecuteOptions {
+  deploymentId?: string;
+  deploymentEventId?: string;
   retryOf?: string;
   parentRunId?: string;
   callerAppId?: string;

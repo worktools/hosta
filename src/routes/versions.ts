@@ -1,3 +1,4 @@
+import { recordDeploymentEvent } from "../deployment-history.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { store, save } from "../store.js";
 import {
@@ -262,14 +263,16 @@ export function registerVersionRoutes(
         );
       if (!store.runs.some(r=>r.versionId===version.id && r.trigger==='manual' && r.status==='succeeded')) return error(res,400,'TRIAL_REQUIRED','Run this exact version successfully before publishing');
       const deployment = store.deployments.find((d) => d.appId === app.id);
-      if (deployment) {
-        deployment.versionId = version.id;
-        deployment.updatedAt = now();
-      }
+      if (!deployment || deployment.status !== "active") return error(res,409,"DEPLOYMENT_INACTIVE","Use publish to create or restore a deployment");
+      const previousVersionId = deployment.versionId;
+      deployment.versionId = version.id;
+      deployment.updatedAt = now();
       app.publishedVersionId = version.id;
       app.updatedAt = now();
+      const event = recordDeploymentEvent(deployment, "set_default", previousVersionId);
       await save();
       json(res, 200, {
+        deploymentEventId: event.id,
         appId: app.id,
         publishedVersionId: version.id,
         versionNumber: version.number,

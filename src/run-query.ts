@@ -17,7 +17,7 @@ export function queryRuns(runs: Run[], query: URLSearchParams) {
     if (matched++ < offset) continue;
     if (items.length === limit) return { items, nextOffset: offset + limit };
     items.push(summary ? {
-      id: run.id, appId: run.appId, versionId: run.versionId, versionNumber: run.versionNumber,
+      id: run.id, deploymentId: run.deploymentId ?? null, deploymentEventId: run.deploymentEventId ?? null, appId: run.appId, versionId: run.versionId, versionNumber: run.versionNumber,
       status: run.status, trigger: run.trigger, retryOf: run.retryOf ?? null,
       durationMs: run.durationMs, createdAt: run.createdAt, finishedAt: run.finishedAt,
       artifactSha256: run.artifactSha256, errorCode: run.error?.code ?? null,

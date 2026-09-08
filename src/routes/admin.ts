@@ -74,6 +74,7 @@ export function registerAdminRoutes(
       store.apps = [];
       store.versions = [];
       store.deployments = [];
+      store.deploymentEvents = [];
       store.schedules = [];
       store.runs = [];
       store.modelCalls = [];

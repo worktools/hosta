@@ -1,3 +1,4 @@
+import { recordDeploymentEvent } from "../deployment-history.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { store, save } from "../store.js";
 import {
@@ -169,6 +170,8 @@ export function registerPublishRoutes(
           "Run this version successfully before publishing",
         );
       let deployment = store.deployments.find((d) => d.appId === app.id);
+      const previousVersionId = deployment?.versionId ?? null;
+      const action = deployment?.status === "inactive" ? "restore" : "publish";
       const webhookKey = deployment ? undefined : randomBytes(24).toString("base64url");
       if (!deployment) {
         deployment = {
@@ -188,9 +191,11 @@ export function registerPublishRoutes(
       deployment.updatedAt = now();
       app.publishedVersionId = version.id;
       app.updatedAt = now();
+      recordDeploymentEvent(deployment, action, previousVersionId);
+      const receipt = { ...deployment, keyHash: undefined };
       await save();
       json(res, 200, {
-        deployment: { ...deployment, keyHash: undefined },
+        deployment: receipt,
         webhookKey,
         webhookUrl: `/hooks/${deployment.id}`,
       });
