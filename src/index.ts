@@ -1,3 +1,4 @@
+import { withRequestValidation } from "./request-validation.js";
 import { queryRuns } from "./run-query.js";
 import { createServer } from "node:http";
 import { engineStatus } from "../lib/hoya-client.mjs";
@@ -67,7 +68,7 @@ const routeRegistrars = [
 const dispatch = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(
       req.url || "/",
-      `http://${req.headers.host || "localhost"}`,
+      "http://localhost",
     );
     const method = req.method!;
 
@@ -209,6 +210,8 @@ The legacy APIs below remain for metadata compatibility; runtime contracts follo
         if (register(req, res, url)) return;
       }
 
+      if (/^\/(api|hooks|invoke|invoke-version)(\/|$)/.test(url.pathname)) return error(res, 404, "NOT_FOUND", "Route not found");
+
       // ── 静态文件 ──────────────────────────────────────────────────────
       if (method === "GET" && (await staticFile(res, url.pathname))) return;
 
@@ -227,7 +230,7 @@ The legacy APIs below remain for metadata compatibility; runtime contracts follo
       );
     }
   };
-const server = createServer(withIdempotency(dispatch));
+const server = createServer(withRequestValidation(withIdempotency(dispatch)));
 
 // ── 启动 ──────────────────────────────────────────────────────────────────────
 

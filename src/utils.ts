@@ -55,14 +55,14 @@ export function error(
 
 // ── 请求解析 ─────────────────────────────────────────────────────────────────
 
-/** 解析请求体为 JSON，限制 1 MiB */
+/** 解析请求体为 JSON，限制 2 MiB */
 export async function body(
   req: IncomingMessage,
 ): Promise<Record<string, unknown>> {
   if (Object.hasOwn(req, "parsedBody")) return (req as IncomingMessage & { parsedBody: Record<string, unknown> }).parsedBody;
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of req) {
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     size += (chunk as Buffer).length;
     if (size > 2_097_152) {
       const err = new Error("Request body exceeds 2 MiB");
@@ -368,3 +368,11 @@ export function sampleCode(description = ""): string {
 
 export const sampleWasm =
   "AGFzbQEAAAABBQFgAAF/AwIBAAcIAQRtYWluAAAKBgEEAEEqCw==";
+
+/** Preserve parser errors in handlers that must select a deployment before reading input. */
+export function requestError(res: ServerResponse, cause: {status?: number; message?: string}): void {
+  const status = cause.status;
+  error(res, status === 413 ? 413 : status === 400 ? 400 : 500,
+    status === 413 ? "PAYLOAD_TOO_LARGE" : status === 400 ? "INVALID_JSON" : "INTERNAL_ERROR",
+    status === 413 ? "Request body exceeds 2 MiB" : status === 400 ? "Body must be valid JSON" : "Unexpected request failure");
+}
