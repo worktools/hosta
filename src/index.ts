@@ -89,6 +89,7 @@ const dispatch = async (req: IncomingMessage, res: ServerResponse) => {
 Hosta creates and hosts short JavaScript or WebAssembly functions.
 
 Current execution: independent Hoya v1 only. Use node bin/hosta.mjs --help.
+POST /api/runs/:id/retry with {"confirm":true} creates a new execution of the original version/input; retryOf links its source. GET /api/runs accepts trigger filtering.
 GET /api/status reports actual readiness. POST /api/apps/:id/versions accepts UTF-8 JS or base64 WASM with encoding=base64; WASM exports memory and hoya_main().
 No Node fallback, ctx.fetch, ctx.call or async host I/O are available in v1. Rebuild legacy WASM artifacts. Local source compilation is opt-in for trusted code.
 The legacy APIs below remain for metadata compatibility; runtime contracts follow v1.

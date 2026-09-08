@@ -28,6 +28,12 @@ test('real Hoya: JS/Rust WASM CLI publish/invoke, guest timeout and engine outag
     const published=(await call(['publish','--app',app.id,'--version',version.id])).body.data;
     const invoke=await call(['invoke','--code',app.code,'--input','-'],JSON.stringify(input),{HOSTA_WEBHOOK_KEY:published.webhookKey});assert.equal(invoke.code,0,invoke.out);assert.deepEqual(invoke.body.data.result,input);
     assert.equal((await call(['runs','get','--run',invoke.body.data.id])).body.data.artifactSha256,version.codeSha256);
+    const retried=await call(['runs','retry','--run',invoke.body.data.id,'--yes','--wait']);
+    assert.equal(retried.code,0,retried.out);
+    assert.notEqual(retried.body.data.id,invoke.body.data.id);
+    assert.equal(retried.body.data.retryOf,invoke.body.data.id);
+    assert.equal(retried.body.data.versionId,version.id);
+    assert.deepEqual(retried.body.data.result,input);
     const dep=(await call(['deployments','get','--app',app.id])).body.data;
     assert.equal(dep.keyHash,undefined);assert.equal(dep.webhookKey,undefined);
     const version2=(await call(['versions','upload','--app',app.id,'--runtime',runtime,'--source',runtime==='wasm'?wasm:'-'],'function main(input){return input;}')).body.data;

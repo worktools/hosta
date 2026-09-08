@@ -55,6 +55,7 @@ export interface Deployment {
 }
 
 export interface Run {
+  retryOf?: string | null;
   id: string;
   appId: string;
   versionId: string;
@@ -274,6 +275,7 @@ export interface WasmEnvelope {
 }
 
 export interface ExecuteOptions {
+  retryOf?: string;
   parentRunId?: string;
   callerAppId?: string;
   callDepth?: number;

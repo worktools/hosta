@@ -21,6 +21,29 @@ export function registerExecutionRoutes(
 ): boolean {
   const method = req.method!;
 
+  // Retrying is an explicit new execution, never a replay of the original response.
+  const retryMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/retry$/);
+  if (method === "POST" && retryMatch) {
+    (async () => {
+      const original = store.runs.find(run => run.id === retryMatch[1]);
+      if (!original) return error(res, 404, "NOT_FOUND", "Run not found");
+      const payload = await body(req);
+      if (!payload || payload.confirm !== true)
+        return error(res, 400, "CONFIRMATION_REQUIRED", "Send confirm=true to execute the original version and input again");
+      if (Object.keys(payload).some(key => key !== "confirm"))
+        return error(res, 400, "INVALID_RETRY", "Retry does not accept input or version overrides");
+      if (!["succeeded", "failed", "timed_out", "rejected", "internal_error"].includes(original.status))
+        return error(res, 409, "RUN_NOT_FINISHED", "Wait for the original run to finish before retrying");
+      const version = versionById(original.versionId);
+      if (!version || version.appId !== original.appId || !appById(original.appId))
+        return error(res, 404, "NOT_FOUND", "Original application or version no longer exists");
+      if (original.artifactSha256 && original.artifactSha256 !== version.codeSha256)
+        return error(res, 409, "ARTIFACT_HASH_MISMATCH", "Original artifact no longer matches the stored version");
+      json(res, 201, await execute(version, structuredClone(original.input), "retry", { retryOf: original.id }));
+    })().catch((e) => error(res, 500, "INTERNAL_ERROR", e.message));
+    return true;
+  }
+
   // POST /api/versions/:id/run
   const runMatch = url.pathname.match(/^\/api\/versions\/([^/]+)\/run$/);
   if (method === "POST" && runMatch) {

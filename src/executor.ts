@@ -12,7 +12,7 @@ export function setHoyaEnabled(enabled: boolean): void {
 export async function execute(version:Version,input:Record<string,unknown>,trigger:string,options:ExecuteOptions={}):Promise<Run> {
   const ds=datasourceByAppId(version.appId);
   const snapshot=ds?store.datasourceSnapshots.filter(s=>s.appId===version.appId&&s.status==='applied').sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0]:undefined;
-  const run:Run={id:id('run'),appId:version.appId,versionId:version.id,versionNumber:version.number,datasourceSnapshotId:snapshot?.id||null,trigger,status:'running',input,logs:[],createdAt:now(),startedAt:now(),parentRunId:options.parentRunId||null,callerAppId:options.callerAppId||null,callDepth:options.callDepth||0};
+  const run:Run={id:id('run'),retryOf:options.retryOf||null,appId:version.appId,versionId:version.id,versionNumber:version.number,datasourceSnapshotId:snapshot?.id||null,trigger,status:'running',input,logs:[],createdAt:now(),startedAt:now(),parentRunId:options.parentRunId||null,callerAppId:options.callerAppId||null,callDepth:options.callDepth||0};
   store.runs.push(run);await save();const start=performance.now();
   try {
     if(version.inputSchema?.type) {
