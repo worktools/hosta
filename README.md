@@ -1,5 +1,9 @@
 # Hosta
 
+> **项目状态：暂缓（2026-09-23）。** 新功能开发与架构改造暂停，恢复时间未定。WASI/QuickJS 及社区底座选型保留为待决策研究；现有代码为预览原型。参见 [暂缓决定与研究索引](docs/WASI_JS_PLATFORM_PLAN.md)。
+>
+> **Project status: on hold (2026-09-23).** Feature development and architecture work are paused with no restart date. Runtime and community-platform options remain under consideration; the existing implementation is a preview.
+
 Hosta 是一个面向开发者和 agents 的轻量 serverless 平台原型。CLI/API 完成创建、上传版本、试运行、发布和诊断；网页先只读展示应用、版本、运行和引擎状态。AI 是可选增强。
 
 执行由独立维护的 [Hoya](https://github.com/worktools/hoya) 提供，支持 QuickJS 和 Rust WASM 的 JSON 输入输出。本分支需要 Hoya execution v1，旧版 Hoya 不兼容；Hosta 不回退到 Node vm 或 Node WASM 执行。
